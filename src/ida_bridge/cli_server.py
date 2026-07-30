@@ -1,0 +1,145 @@
+"""IDA Bridge server management."""
+
+import argparse
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+
+from ida_bridge import logs, protocol
+
+SERVER_MODULE = "ida_bridge.server"
+
+LOG_FILE = Path(os.getenv("IDA_BRIDGE_LOG_FILE", str(logs.log_dir() / "server.log"))).expanduser()
+# Raw stdout/stderr capture for the server process: crash tracebacks and any output that
+# bypasses logging. Kept separate from LOG_FILE so the server's RotatingFileHandler is the
+# sole writer of LOG_FILE (a second writer would keep writing a rotated-out inode).
+OUT_FILE = LOG_FILE.with_suffix(".out")
+
+PORT = protocol.bridge_port()
+
+
+def _server_cmd() -> list[str]:
+    return [sys.executable, "-m", SERVER_MODULE]
+
+
+def get_server_pid() -> int | None:
+    """Get PID of process listening on our port."""
+    try:
+        result = subprocess.run(
+            ["lsof", "-ti", f":{PORT}", "-sTCP:LISTEN"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return int(result.stdout.strip().split()[0])
+    except (subprocess.SubprocessError, ValueError):
+        pass
+    return None
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    pid = get_server_pid()
+    if pid:
+        print(f"Server running (PID: {pid})")
+        return 0
+    print("Server not running")
+    return 1
+
+
+def cmd_start(args: argparse.Namespace) -> int:
+    if get_server_pid():
+        print("Server already running")
+        return 0
+
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env["IDA_BRIDGE_LOG_FILE"] = str(LOG_FILE)
+
+    print(f"Starting server... (logging to {LOG_FILE})")
+    # Truncate per boot: this holds only the current run's raw output (mostly empty).
+    with open(OUT_FILE, "w") as out:
+        proc = subprocess.Popen(
+            _server_cmd(),
+            stdout=out,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            env=env,
+        )
+
+    time.sleep(0.5)
+    if get_server_pid():
+        print(f"Server started (PID: {proc.pid})")
+        return 0
+
+    print(f"Failed to start. Check logs: {LOG_FILE} and {OUT_FILE}")
+    return 1
+
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    pid = get_server_pid()
+    if not pid:
+        print("Server not running")
+        return 0
+
+    print(f"Stopping server (PID: {pid})...")
+    os.kill(pid, signal.SIGTERM)
+
+    for _ in range(20):
+        if not get_server_pid():
+            print("Server stopped")
+            return 0
+        time.sleep(0.1)
+
+    os.kill(pid, signal.SIGKILL)
+    print("Server killed")
+    return 0
+
+
+def cmd_log(args: argparse.Namespace) -> int:
+    if not LOG_FILE.exists():
+        print(f"No log file: {LOG_FILE}")
+        return 1
+    try:
+        subprocess.run(["tail", "-f", str(LOG_FILE)])
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+def cmd_log_clear(args: argparse.Namespace) -> int:
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if LOG_FILE.exists():
+        LOG_FILE.write_text("")
+        print(f"Log cleared: {LOG_FILE}")
+    else:
+        print(f"No log file to clear: {LOG_FILE}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="IDA Bridge server management")
+    sub = parser.add_subparsers(dest="cmd")
+
+    sub.add_parser("status", help="Check if server is running")
+    sub.add_parser("start", help="Start server in background")
+    sub.add_parser("stop", help="Stop the server")
+    sub.add_parser("log", help="Tail the server log")
+    sub.add_parser("log-clear", help="Clear the server log")
+
+    args = parser.parse_args(argv)
+    commands = {
+        "status": cmd_status,
+        "start": cmd_start,
+        "stop": cmd_stop,
+        "log": cmd_log,
+        "log-clear": cmd_log_clear,
+    }
+
+    if args.cmd in commands:
+        return commands[args.cmd](args)
+    parser.print_help()
+    return 1
