@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-08-03
+
+### Changed
+- Updated public setup instructions with the ida-docs companion skill, public clone URL, and macOS support requirement.
+
 ## [0.4.1] - 2026-07-30
 
 ### Added

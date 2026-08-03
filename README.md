@@ -10,14 +10,15 @@ Agent skill and references: `skills/ida-bridge/`.
 ## Prerequisites
 
 - IDA Pro >= 9.0
-- macOS (other platforms work but have limited functionality and are untested)
+- macOS
+- [ida-docs](https://github.com/cellebrite-labs/ida-docs) agent skill (for agent-authored IDAPython)
 - [ida-setup](https://github.com/cellebrite-labs/ida-setup) (recommended on macOS; automates the manual setup below)
 
 ## Installation
 
 ```bash
 # clone repo
-git clone <repo-url>
+git clone https://github.com/cellebrite-labs/ida-bridge.git
 cd ida-bridge
 
 # install ida-bridge cli
@@ -26,8 +27,9 @@ uv tool install -e .
 # install ida-bridge plugin into IDA Python venv
 ida-setup plugin install -e .
 
-# install pi agent skill
+# install pi agent skills
 pi install .
+pi install https://github.com/cellebrite-labs/ida-docs
 ```
 
 ## Manual setup
@@ -37,7 +39,7 @@ The same venv is used for IDA UI and IDA headless and everything just works.
 Otherwise these are the things you need to set up.
 
 1. host CLI, so the agent can run `ida-bridge` commands
-2. agent skill, that explains how to use `ida-bridge`
+2. agent skills, so the agent can operate ida-bridge and verify current IDA APIs
 3. IDA UI plugin, so IDA UI is reachable
 4. IDA headless, so the headless runner can import both `idapro` and `ida_bridge`
 
@@ -47,11 +49,19 @@ This one is straightforward. Editable install: `uv tool install -e .` (or `pip i
 
 Validate by running `ida-bridge server status`, it's supposed to say server is not running.
 
-### Agent skill
+### Agent skills
 
-Depending on the agent harness you use, symlink to the proper location:
-- pi, codex: `ln -s repo/skills/ida-bridge ~/.agents/skills/`
-- claude code: `ln -s repo/skills/ida-bridge ~/.claude/skills/`
+For manual skill installation, clone both repositories and symlink their skill directories:
+
+```bash
+# pi, codex
+ln -s /path/to/ida-bridge/skills/ida-bridge ~/.agents/skills/
+ln -s /path/to/ida-docs/skills/ida-docs ~/.agents/skills/
+
+# claude code
+ln -s /path/to/ida-bridge/skills/ida-bridge ~/.claude/skills/
+ln -s /path/to/ida-docs/skills/ida-docs ~/.claude/skills/
+```
 
 Validate: run the agent and tell it to start ida-bridge server, it's supposed to run `ida-bridge server start`.
 
@@ -99,9 +109,11 @@ This lets an agent discover available targets, run queries or code against them,
 
 ## Agent usage
 
-Give your agent the ida-bridge skill (`skills/ida-bridge/SKILL.md`). It contains the operational knowledge -- command patterns, SQL schema, session management, and pitfalls.
+The ida-bridge skill (`skills/ida-bridge/SKILL.md`) contains the operational knowledge: command patterns, SQL schema, session management, and pitfalls.
 
-With the skill loaded, you can ask the agent to:
+When SQL cannot express an operation, ida-bridge tells the agent to load `ida-docs` before writing IDAPython. ida-docs checks the current IDA 9.x API against the official SDK instead of relying on stale model knowledge.
+
+You can ask the agent to:
 - open an IDB or create one from a binary
 - search strings, find callers, trace cross-references
 - annotate functions, set types, rename variables
