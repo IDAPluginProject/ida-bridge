@@ -31,7 +31,7 @@ class TestIdalibRunnerOverwriteSafety:
         # Produce a stale target: a real packed .i64, cleanly closed and no longer
         # open (save+quit) -- distinct from the live-session and companions-only cases.
         proc, target = spawn_idalib(live_bridge, tmp_path, binary_path=small_macho_arm64)
-        client_id = await wait_for_idalib(live_bridge, proc)
+        client_id = (await wait_for_idalib(live_bridge, proc, idb_path=target)).client_id
         await shutdown_and_save(live_bridge, client_id, proc)
         assert target.exists(), "expected a packed .i64 after save+quit"
         before = target.read_bytes()
@@ -51,7 +51,7 @@ class TestIdalibRunnerOverwriteSafety:
         proc2, target2 = spawn_idalib(live_bridge, tmp_path, binary_path=small_macho_arm64)
         assert target2 == target
         try:
-            await wait_for_idalib(live_bridge, proc2)
+            await wait_for_idalib(live_bridge, proc2, idb_path=target2)
         finally:
             terminate_idalib(proc2)
 
@@ -77,12 +77,12 @@ class TestIdalibRunnerOverwriteSafety:
             proc, target = spawn_idalib(live_bridge, tmp_path, binary_path=small_macho_arm64)
         else:
             setup_proc, target = spawn_idalib(live_bridge, tmp_path, binary_path=small_macho_arm64)
-            setup_client_id = await wait_for_idalib(live_bridge, setup_proc)
+            setup_client_id = (await wait_for_idalib(live_bridge, setup_proc, idb_path=target)).client_id
             await shutdown_and_save(live_bridge, setup_client_id, setup_proc)
             proc, _ = spawn_idalib(live_bridge, tmp_path, idb_path=target)
 
         try:
-            client_id = await wait_for_idalib(live_bridge, proc)
+            client_id = (await wait_for_idalib(live_bridge, proc, idb_path=target)).client_id
 
             if attack == "force_overwrite":
                 result = await asyncio.to_thread(
@@ -120,7 +120,7 @@ class TestIdalibRunnerOverwriteSafety:
         with no packed .i64 at all -- the overwrite gate must catch that state, not
         only a packed file."""
         proc, target = spawn_idalib(live_bridge, tmp_path, binary_path=small_macho_arm64)
-        await wait_for_idalib(live_bridge, proc)
+        await wait_for_idalib(live_bridge, proc, idb_path=target)
         # Kill (not graceful terminate): close_database() is only reached via the
         # request loop exiting, which we're bypassing entirely -- so this
         # deterministically leaves companions with no packed file, regardless of
@@ -146,6 +146,6 @@ class TestIdalibRunnerOverwriteSafety:
         proc2, target2 = spawn_idalib(live_bridge, tmp_path, binary_path=small_macho_arm64)
         assert target2 == target
         try:
-            await wait_for_idalib(live_bridge, proc2)
+            await wait_for_idalib(live_bridge, proc2, idb_path=target2)
         finally:
             terminate_idalib(proc2)

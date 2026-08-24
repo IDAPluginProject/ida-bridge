@@ -1,14 +1,14 @@
 """IDA Bridge server management."""
 
 import argparse
+from collections import deque
 import os
 from pathlib import Path
-import signal
 import subprocess
 import sys
 import time
 
-from ida_bridge import logs, protocol
+from ida_bridge import logs, proc, protocol
 
 SERVER_MODULE = "ida_bridge.server"
 
@@ -27,17 +27,7 @@ def _server_cmd() -> list[str]:
 
 def get_server_pid() -> int | None:
     """Get PID of process listening on our port."""
-    try:
-        result = subprocess.run(
-            ["lsof", "-ti", f":{PORT}", "-sTCP:LISTEN"],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return int(result.stdout.strip().split()[0])
-    except (subprocess.SubprocessError, ValueError):
-        pass
-    return None
+    return proc.listening_pid(PORT)
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -62,17 +52,18 @@ def cmd_start(args: argparse.Namespace) -> int:
     print(f"Starting server... (logging to {LOG_FILE})")
     # Truncate per boot: this holds only the current run's raw output (mostly empty).
     with open(OUT_FILE, "w") as out:
-        proc = subprocess.Popen(
+        subprocess.Popen(
             _server_cmd(),
             stdout=out,
             stderr=subprocess.STDOUT,
-            start_new_session=True,
             env=env,
+            **proc.detached_popen_kwargs(),
         )
 
     time.sleep(0.5)
-    if get_server_pid():
-        print(f"Server started (PID: {proc.pid})")
+    listener_pid = get_server_pid()
+    if listener_pid:
+        print(f"Server started (PID: {listener_pid})")
         return 0
 
     print(f"Failed to start. Check logs: {LOG_FILE} and {OUT_FILE}")
@@ -86,16 +77,11 @@ def cmd_stop(args: argparse.Namespace) -> int:
         return 0
 
     print(f"Stopping server (PID: {pid})...")
-    os.kill(pid, signal.SIGTERM)
-
-    for _ in range(20):
-        if not get_server_pid():
-            print("Server stopped")
-            return 0
-        time.sleep(0.1)
-
-    os.kill(pid, signal.SIGKILL)
-    print("Server killed")
+    method = proc.terminate_pid(pid, timeout_s=2.0)
+    if get_server_pid():
+        print("Server did not stop")
+        return 1
+    print("Server killed" if method == "sigkill" else "Server stopped")
     return 0
 
 
@@ -104,7 +90,15 @@ def cmd_log(args: argparse.Namespace) -> int:
         print(f"No log file: {LOG_FILE}")
         return 1
     try:
-        subprocess.run(["tail", "-f", str(LOG_FILE)])
+        with LOG_FILE.open(encoding="utf-8", errors="replace") as fh:
+            for line in deque(fh, maxlen=10):
+                print(line, end="", flush=True)
+            while True:
+                line = fh.readline()
+                if line:
+                    print(line, end="", flush=True)
+                else:
+                    time.sleep(0.2)
     except KeyboardInterrupt:
         pass
     return 0

@@ -75,6 +75,8 @@ Some behavior tests reference a specific named binary from `bins/` instead of th
 ### Fixture generation
 
 Requires `clang`/`clang++`/`lipo`/`strip` and a running bridge server that `exec-idb` connects to.
+Host unit and integration tests are OS-agnostic and run on macOS and Windows.
+E2E and fixture generation still need a working idalib install; the committed fixture sources are Mach-O and are built with the macOS toolchain above.
 
 `tests/fixtures/build.py` is the fixture generator; a fresh checkout runs it once to populate `idbs/`:
 
@@ -125,6 +127,7 @@ Useful fixture types to add:
 
 ### Coverage gaps
 
+- Windows-built e2e fixture binaries (current sources are Mach-O / lipo)
 - raw blob/shellcode loader path
 - 32-bit `.idb` open path
 - IDA 8.x `.i64` migration/open path

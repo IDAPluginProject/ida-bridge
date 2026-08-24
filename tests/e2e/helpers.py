@@ -11,15 +11,16 @@ import time
 import pytest
 import websockets
 
-from ida_bridge import protocol
+from ida_bridge import proc, protocol
 from ida_bridge.agent_client import AgentClient, open_agent_client
 from ida_bridge.server import BridgeServer
+from ida_bridge.supervisor.commands import default_idalib_python
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 
-IDALIB_VENV_PYTHON = Path.home() / ".idapro" / "venv" / "bin" / "python3"
+IDALIB_VENV_PYTHON = default_idalib_python()
 IDALIB_RUNNER = Path(__file__).resolve().parent.parent.parent / "src" / "ida_bridge" / "idalib_runner.py"
 
 
@@ -97,37 +98,73 @@ def spawn_idalib(
             str(idb_path),
         ]
 
-    proc = subprocess.Popen(
+    process = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         env=env,
+        **proc.detached_popen_kwargs(),
     )
-    return proc, out_idb
+    return process, out_idb
+
+
+@dataclass
+class IdalibReady:
+    client_id: str
+    pid: int
+
+
+def _same_path(left: str, right: str) -> bool:
+    return os.path.normcase(os.path.abspath(left)) == os.path.normcase(os.path.abspath(right))
 
 
 async def wait_for_idalib(
     bridge: BridgeInfo,
-    proc: subprocess.Popen[bytes],
-) -> str:
+    process: subprocess.Popen[bytes],
+    *,
+    idb_path: Path | None = None,
+) -> IdalibReady:
     """Poll bridge until the runner appears. Fails the test on timeout."""
-    client_id = await _poll_for_idalib(bridge.url, proc.pid, timeout_s=120)
-    if client_id is None:
-        dump_process_output(proc)
-        pytest.fail(f"idalib runner (pid={proc.pid}) did not connect within timeout")
-    return client_id
-
-
-def terminate_idalib(proc: subprocess.Popen[bytes]) -> None:
-    """Best-effort terminate + kill an idalib process."""
-    if proc.poll() is not None:
-        return
-    proc.terminate()
+    # Snapshot first so a leftover client with the same IDB path cannot match.
+    existing_ids: set[str] = set()
     try:
-        proc.wait(timeout=10)
+        async with open_agent_client(client_id=f"e2e-snapshot-{os.getpid()}", url=bridge.url) as client:
+            resp = await client.list(kind=protocol.LIST_KIND_IDA)
+            if resp.ok and resp.clients:
+                existing_ids = {c.client_id for c in resp.clients}
+    except Exception:
+        existing_ids = set()
+
+    ready = await _poll_for_idalib(
+        bridge.url,
+        process.pid,
+        timeout_s=120,
+        idb_path=str(idb_path) if idb_path is not None else None,
+        existing_ids=existing_ids,
+    )
+    if ready is None:
+        dump_process_output(process)
+        pytest.fail(f"idalib runner (pid={process.pid}) did not connect within timeout")
+    return ready
+
+
+def terminate_idalib(process: subprocess.Popen[bytes]) -> None:
+    """Best-effort terminate + kill an idalib process (including venv children)."""
+    if process.poll() is not None:
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            pass
+        return
+    proc.terminate_pid(process.pid, timeout_s=10.0)
+    try:
+        process.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=5)
+        process.kill()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 async def shutdown_and_save(bridge: BridgeInfo, client_id: str, proc: subprocess.Popen[bytes]) -> None:
@@ -199,8 +236,16 @@ def run_idalib_runner_to_exit(
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
 
 
-async def _poll_for_idalib(url: str, pid: int, *, timeout_s: float) -> str | None:
-    """Poll the bridge for an idalib client with the given pid."""
+async def _poll_for_idalib(
+    url: str,
+    pid: int,
+    *,
+    timeout_s: float,
+    idb_path: str | None = None,
+    existing_ids: set[str] | None = None,
+) -> IdalibReady | None:
+    """Poll the bridge for a *new* idalib client matching pid/tree or IDB path."""
+    known = existing_ids if existing_ids is not None else set()
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         try:
@@ -208,9 +253,18 @@ async def _poll_for_idalib(url: str, pid: int, *, timeout_s: float) -> str | Non
                 resp = await client.list(kind=protocol.LIST_KIND_IDA)
                 if resp.ok and resp.clients:
                     for c in resp.clients:
+                        if c.client_id in known:
+                            continue
                         meta = c.meta or {}
-                        if meta.get("runtime") == "idalib" and meta.get("pid") == pid:
-                            return c.client_id
+                        if meta.get("runtime") != "idalib":
+                            continue
+                        got_pid = meta.get("pid")
+                        got_idb = meta.get("idb_path")
+                        pid_match = isinstance(got_pid, int) and proc.is_pid_in_tree(pid, got_pid)
+                        path_match = idb_path is not None and isinstance(got_idb, str) and _same_path(got_idb, idb_path)
+                        if pid_match or path_match:
+                            real_pid = got_pid if isinstance(got_pid, int) else pid
+                            return IdalibReady(client_id=c.client_id, pid=real_pid)
         except Exception:
             pass
         await asyncio.sleep(1.0)
@@ -265,10 +319,10 @@ async def make_runner(
     bridge_info: BridgeInfo, tmp_dir: Path, idb_path: Path, agent_id: str
 ) -> AsyncIterator[SqlRunner]:
     """Spawn idalib, open one agent connection, yield a SqlRunner."""
-    proc, _ = spawn_idalib(bridge_info, tmp_dir, idb_path=idb_path)
+    process, out_idb = spawn_idalib(bridge_info, tmp_dir, idb_path=idb_path)
     try:
-        client_id = await wait_for_idalib(bridge_info, proc)
+        ready = await wait_for_idalib(bridge_info, process, idb_path=out_idb)
         async with open_agent_client(client_id=agent_id, url=bridge_info.url) as agent:
-            yield SqlRunner(agent, client_id, session_id=agent_id)
+            yield SqlRunner(agent, ready.client_id, session_id=agent_id)
     finally:
         terminate_idalib(proc)

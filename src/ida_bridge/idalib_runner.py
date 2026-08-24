@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # IMPORTANT: idalib requires `import idapro` to be the first import.
 import argparse
-import fcntl
 import logging
 import os
 from pathlib import Path
 import signal
 import sys
+import time
 from typing import Any, NoReturn
 
 import idapro
@@ -37,22 +37,41 @@ def _die(msg: str, *, code: int = 2) -> NoReturn:
 
 
 # Companion files IDA unpacks a database into while a session has it open (and
-# repacks back into the single .i64/.idb on save/close). IDA holds an OS advisory
-# lock (flock) on these while live, but not on the packed .i64/.idb itself.
+# repacks back into the single .i64/.idb on save/close). IDA holds an exclusive
+# OS lock on these while live, but not on the packed .i64/.idb itself.
 _IDB_COMPANION_SUFFIXES = (".id0", ".id1", ".id2", ".nam", ".til")
 
 
 def _is_locked(path: Path) -> bool:
-    """True if *path* is currently held under an exclusive OS advisory lock (flock).
+    """True if *path* is currently held under an exclusive OS lock.
 
-    Only ``BlockingIOError`` (lock unavailable) counts as "locked": any other
-    failure while probing propagates rather than silently treating an unrelated
-    error (e.g. a filesystem that doesn't support flock) as "not locked" and
-    letting a caller proceed to delete something it couldn't actually verify
-    was safe to delete.
+    POSIX: ``fcntl.flock``. Only ``BlockingIOError`` counts as locked; other
+    probe failures propagate so we never treat "could not check" as "safe".
+
+    Windows: IDA opens companions with share mode 0, so another open fails
+    with ``PermissionError`` (sharing violation). That is the locked case.
     """
     if not path.exists():
         return False
+    if sys.platform == "win32":
+        return _is_locked_windows(path)
+    return _is_locked_posix(path)
+
+
+def _is_locked_windows(path: Path) -> bool:
+    try:
+        fd = os.open(str(path), os.O_RDONLY)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    os.close(fd)
+    return False
+
+
+def _is_locked_posix(path: Path) -> bool:
+    import fcntl
+
     try:
         fd = os.open(str(path), os.O_RDONLY)
     except OSError:
@@ -118,7 +137,8 @@ try:
 except Exception as exc:  # pragma: no cover
     _die(
         "missing python deps for idalib runner: pydantic, websocket-client\n"
-        "Fix: use the ida-setup skill to install them into the python you pass to start-idalib.\n"
+        "Fix: install them into the python you pass to start-idalib "
+        "(see README manual setup).\n"
         f"Import error: {exc}"
     )
 
@@ -159,6 +179,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=10.0,
         type=float,
         help="Fail if the bridge handshake does not complete within this timeout",
+    )
+    parser.add_argument(
+        "--auto-wait-s",
+        default=None,
+        type=float,
+        help="Seconds to wait for auto-analysis before connecting. "
+        "Default: wait until the queue drains. 0 skips the wait "
+        "(analysis may be incomplete).",
     )
 
     ns = parser.parse_args(argv)
@@ -201,7 +229,36 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     if ns.connect_timeout_s <= 0:
         _die("--connect-timeout-s must be > 0")
 
+    if ns.auto_wait_s is not None and ns.auto_wait_s < 0:
+        _die("--auto-wait-s must be >= 0")
+
     return ns
+
+
+def _wait_for_analysis(idb_path: str, auto_wait_s: float | None) -> None:
+    """Wait for IDA auto-analysis before advertising the client.
+
+    Default (``None``) is ``ida_auto.auto_wait()``: block until the queue is
+    empty. ``0`` skips the wait. A positive value polls ``auto_is_ok`` until
+    the deadline, then connects with whatever analysis is already stored.
+    """
+    if auto_wait_s is not None and auto_wait_s == 0:
+        log.warning("skipping auto-analysis wait: %s (results may be incomplete)", idb_path)
+        return
+    log.info("waiting for auto-analysis: %s", idb_path)
+    if auto_wait_s is None:
+        ida_auto.auto_wait()
+        return
+    deadline = time.monotonic() + auto_wait_s
+    while not ida_auto.auto_is_ok():
+        if time.monotonic() >= deadline:
+            log.warning(
+                "auto-analysis wait timed out after %ss: %s (results may be incomplete)",
+                auto_wait_s,
+                idb_path,
+            )
+            return
+        time.sleep(0.25)
 
 
 def _open_database(args: argparse.Namespace) -> str:
@@ -276,9 +333,7 @@ def run_worker(args: argparse.Namespace) -> int:
     handler: RequestHandler | None = None
 
     try:
-        # Wait for analysis before advertising ourselves to the bridge.
-        log.info("waiting for auto-analysis: %s", idb_path)
-        ida_auto.auto_wait()
+        _wait_for_analysis(idb_path, args.auto_wait_s)
 
         if signal_shutdown:
             return 0

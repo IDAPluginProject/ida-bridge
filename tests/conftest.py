@@ -12,7 +12,7 @@ from tests.harness import ServeBridge
 
 @pytest.fixture(scope="session", autouse=True)
 def _isolate_log_dir(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
-    """Keep tests off the real ~/Library/Logs/ida-bridge tree. The server's
+    """Keep tests off the real platform log directory. The server's
     startup log prune would otherwise touch the user's actual logs."""
     prev = os.environ.get("IDA_BRIDGE_LOG_DIR")
     os.environ["IDA_BRIDGE_LOG_DIR"] = str(tmp_path_factory.mktemp("ida-bridge-logs"))
