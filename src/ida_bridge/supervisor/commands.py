@@ -269,7 +269,6 @@ def start_idalib(
     dyld_module: str | None = None,
     python: str | None = None,
     wait_s: float = 300.0,
-    auto_wait_s: float | None = None,
 ) -> IdalibStartResult:
     """Start an idalib worker and poll until it connects to the bridge.
 
@@ -335,10 +334,6 @@ def start_idalib(
             runner_args.extend(["--arch", arch])
         if dyld_module:
             runner_args.extend(["--dyld-module", dyld_module])
-    if auto_wait_s is not None:
-        if auto_wait_s < 0:
-            raise StartError("--auto-wait-s must be >= 0")
-        runner_args.extend(["--auto-wait-s", str(auto_wait_s)])
 
     # Start with a placeholder log, then bind it to the pid once the process exists.
     tmp_log = _starting_log_path("idalib")
@@ -422,7 +417,6 @@ def cmd_start_idalib(args: argparse.Namespace) -> int:
             dyld_module=args.dyld_module,
             python=args.python,
             wait_s=float(args.wait_s),
-            auto_wait_s=args.auto_wait_s,
         )
     except StartError as exc:
         print(str(exc), file=sys.stderr)
@@ -431,8 +425,7 @@ def cmd_start_idalib(args: argparse.Namespace) -> int:
     if result.client_id is None:
         print(
             f"idalib runner started (pid={result.pid}) but did not connect to the bridge within {args.wait_s}s.\n"
-            "This is expected for large binaries (auto-analysis must complete first).\n"
-            "If the analysis queue never drains, restart with --auto-wait-s 0 (results may be incomplete).",
+            "This is expected for large binaries (auto-analysis must complete first).",
             file=sys.stderr,
         )
         _output(

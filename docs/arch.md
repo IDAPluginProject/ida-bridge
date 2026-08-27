@@ -76,7 +76,7 @@ Ownership and lifecycle are separate:
 ## Runtime notes
 
 - UI IDA may be started by the supervisor or by a human. The plugin behavior is the same either way. `start-ui` launches via LaunchServices on macOS and `ida.exe` on Windows.
-- idalib connects to the bridge after auto-analysis completes (`ida_auto.auto_wait()`). `--auto-wait-s` can bound or skip that wait; a connected instance may then still have analysis in flight.
+- idalib connects to the bridge only after auto-analysis completes. This keeps the listed-client invariant simple: a connected idalib instance is ready to serve requests.
 - Both UI IDA and idalib reconnect to the bridge after bridge restarts.
 
 ## Security model
