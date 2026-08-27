@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- `--auto-wait-s` on `start-idalib` and `exec-idb`: bound or skip the runner's `auto_wait()` so a non-draining analysis queue cannot hang forever. Default is still unbounded `auto_wait()`. `0` connects immediately; analysis may be incomplete.
+
 ## [0.5.0] - 2026-09-01
 
 ### Added

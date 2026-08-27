@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import signal
 import sys
+import time
 from typing import Any, NoReturn
 
 import idapro
@@ -186,6 +187,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         type=float,
         help="Fail if the bridge handshake does not complete within this timeout",
     )
+    parser.add_argument(
+        "--auto-wait-s",
+        default=None,
+        type=float,
+        help="Seconds to wait for auto-analysis before connecting. "
+        "Default: wait until the queue drains. 0 skips the wait "
+        "(analysis may be incomplete).",
+    )
 
     ns = parser.parse_args(argv)
 
@@ -227,7 +236,36 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     if ns.connect_timeout_s <= 0:
         _die("--connect-timeout-s must be > 0")
 
+    if ns.auto_wait_s is not None and ns.auto_wait_s < 0:
+        _die("--auto-wait-s must be >= 0")
+
     return ns
+
+
+def _wait_for_analysis(idb_path: str, auto_wait_s: float | None) -> None:
+    """Wait for IDA auto-analysis before advertising the client.
+
+    Default (``None``) is ``ida_auto.auto_wait()``: block until the queue is
+    empty. ``0`` skips the wait. A positive value polls ``auto_is_ok`` until
+    the deadline, then connects with whatever analysis is already stored.
+    """
+    if auto_wait_s is not None and auto_wait_s == 0:
+        log.warning("skipping auto-analysis wait: %s (results may be incomplete)", idb_path)
+        return
+    log.info("waiting for auto-analysis: %s", idb_path)
+    if auto_wait_s is None:
+        ida_auto.auto_wait()
+        return
+    deadline = time.monotonic() + auto_wait_s
+    while not ida_auto.auto_is_ok():
+        if time.monotonic() >= deadline:
+            log.warning(
+                "auto-analysis wait timed out after %ss: %s (results may be incomplete)",
+                auto_wait_s,
+                idb_path,
+            )
+            return
+        time.sleep(0.25)
 
 
 def _open_database(args: argparse.Namespace) -> str:
@@ -302,9 +340,7 @@ def run_worker(args: argparse.Namespace) -> int:
     handler: RequestHandler | None = None
 
     try:
-        # Wait for analysis before advertising ourselves to the bridge.
-        log.info("waiting for auto-analysis: %s", idb_path)
-        ida_auto.auto_wait()
+        _wait_for_analysis(idb_path, args.auto_wait_s)
 
         if signal_shutdown:
             return 0

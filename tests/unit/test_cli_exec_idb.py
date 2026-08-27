@@ -251,3 +251,7 @@ class TestArgValidation:
 
         mocks["start"].assert_called_once()
         assert mocks["start"].call_args.kwargs["dyld_module"] == "/usr/lib/system/libcompiler_rt.dylib"
+
+    def test_passes_auto_wait_s(self) -> None:
+        _, mocks = _run_with(_patches(exec_rv=_ok_response(result=1)), [*_IDB_ARGS, "--auto-wait-s", "0"])
+        assert mocks["start"].call_args.kwargs["auto_wait_s"] == 0.0
