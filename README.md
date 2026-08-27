@@ -32,111 +32,219 @@ pi install .
 pi install https://github.com/cellebrite-labs/ida-docs
 ```
 
-On Windows, skip `ida-setup` and follow [Windows setup](#windows-setup).
-
 ## Manual setup
 
-On macOS, `ida-setup` is the easy mode: it sets up a venv in `~/.idapro/venv` and makes IDA use it.
-The same venv is used for IDA UI and IDA headless and everything just works.
-On Windows the same four pieces apply, but every step is manual.
+On macOS, `ida-setup` is the easy mode: it sets up a venv, installs packages and plugins.
+On Windows, or if you don't use `ida-setup`, follow the instructions below.
+For Windows use `PowerShell`.
+
+The steps below assume a clone of this repo as your working directory, if you don't have one yet:
+
+```
+git clone https://github.com/cellebrite-labs/ida-bridge.git
+cd ida-bridge
+```
+
+Four pieces need to end up in place:
 
 1. host CLI, so the agent can run `ida-bridge` commands
-2. agent skills, so the agent can operate ida-bridge and verify current IDA APIs
+2. two agent skills: one to operate ida-bridge, one to verify current IDA APIs
 3. IDA UI plugin, so IDA UI is reachable
 4. IDA headless, so the headless runner can import both `idapro` and `ida_bridge`
 
+Locations of interest:
+- IDA's per-user directory: `~/.idapro/` on macOS, `%APPDATA%\Hex-Rays\IDA Pro\` on Windows
+- the IDA venv, shared by IDA UI and the headless runner: `~/.idapro/venv` on macOS, `$env:USERPROFILE\.idapro\venv` on Windows
+
+### Python
+
+`ida-bridge` needs Python 3.12 or newer. On Windows, install it from [python.org](https://www.python.org/downloads/).
+
+Validate:
+- macOS: `python3 -c "import sys, sysconfig; print(sys.version, sysconfig.get_platform())"`
+- Windows: `python -c "import sys, sysconfig; print(sys.version, sysconfig.get_platform())"`
+
+If you manage several versions (pyenv, Homebrew), use whichever binary reports 3.12+.
+
+Windows trap: `%LOCALAPPDATA%\Microsoft\WindowsApps` holds `python.exe` and `python3.exe` aliases.
+Both are Microsoft Store stubs: they print "Python was not found" or open the Store instead of
+running Python.
+
+### Create the IDA venv
+
+macOS: `python3 -m venv ~/.idapro/venv`
+Windows: `python -m venv "$env:USERPROFILE\.idapro\venv"`
+
+Install ida-bridge and idalib into it; both IDA UI and the headless runner will use this venv:
+
+macOS: `~/.idapro/venv/bin/python3 -m pip install -e . idapro`
+Windows: `& "$env:USERPROFILE\.idapro\venv\Scripts\python.exe" -m pip install -e . idapro`
+
+Validate:
+- macOS: `~/.idapro/venv/bin/python3 -c "import ida_bridge, idapro"`
+- Windows: `& "$env:USERPROFILE\.idapro\venv\Scripts\python.exe" -c "import ida_bridge, idapro"`
+
+### Make IDA UI use the venv
+
+The headless runner uses the venv directly. IDA UI needs to be pointed at it, through the
+`IDAPYTHON_VENV_EXECUTABLE` environment variable. IDA reads it at startup, so only instances
+started after it is set pick it up.
+
+macOS: the value has to live in launchd's per-user environment -- GUI apps do not read shell
+startup files. `ida-setup` installs a user LaunchAgent that sets it; without ida-setup, set it
+yourself:
+
+```bash
+launchctl setenv IDAPYTHON_VENV_EXECUTABLE ~/.idapro/venv/bin/python3
+```
+
+That lasts until logout; a user LaunchAgent running the same command at login makes it persistent.
+Read it back with `launchctl asuser $(id -u) launchctl getenv IDAPYTHON_VENV_EXECUTABLE`.
+
+Windows:
+`[Environment]::SetEnvironmentVariable("IDAPYTHON_VENV_EXECUTABLE", "$env:USERPROFILE\.idapro\venv\Scripts\python.exe", "User")`
+
+Read it back with `[Environment]::GetEnvironmentVariable("IDAPYTHON_VENV_EXECUTABLE", "User")`.
+
+Validate: start IDA and run `import sys; print(sys.prefix)` in its Python console.
+It should print the venv path rather than the base interpreter.
+
 ### Host CLI
 
-This one is straightforward. Editable install: `uv tool install -e .` (or `pip install -e .`).
+This one is straightforward -- an editable install of the ida-bridge CLI:
 
-Validate by running `ida-bridge server status`, it's supposed to say server is not running.
+```
+uv tool install -e .
+# or: pip install -e .   -- installs into the active interpreter rather than an isolated one
+```
+
+Validate by running `ida-bridge server status` -- it should report that the server is not running.
 
 ### Agent skills
 
-For manual skill installation, clone both repositories and symlink their skill directories:
+Clone ida-docs next to this repo, keeping this repo as the working directory:
+`git clone https://github.com/cellebrite-labs/ida-docs.git ../ida-docs`
+
+Then link both skill directories into the agent's skills directory.
+The commands below use pi's (`~/.pi/agent/skills/`); for codex use `~/.codex/skills/`, for Claude Code `~/.claude/skills/`:
 
 ```bash
-# pi, codex
-ln -s /path/to/ida-bridge/skills/ida-bridge ~/.agents/skills/
-ln -s /path/to/ida-docs/skills/ida-docs ~/.agents/skills/
-
-# claude code
-ln -s /path/to/ida-bridge/skills/ida-bridge ~/.claude/skills/
-ln -s /path/to/ida-docs/skills/ida-docs ~/.claude/skills/
+mkdir -p ~/.pi/agent/skills
+ln -s "$PWD/skills/ida-bridge" ~/.pi/agent/skills/
+ln -s "$PWD/../ida-docs/skills/ida-docs" ~/.pi/agent/skills/
 ```
 
-Validate: run the agent and tell it to start ida-bridge server, it's supposed to run `ida-bridge server start`.
+On Windows use a directory junction:
+
+```powershell
+# pi
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.pi\agent\skills" | Out-Null
+New-Item -ItemType Junction -Path "$env:USERPROFILE\.pi\agent\skills\ida-bridge" -Target "$PWD\skills\ida-bridge"
+New-Item -ItemType Junction -Path "$env:USERPROFILE\.pi\agent\skills\ida-docs" -Target "$PWD\..\ida-docs\skills\ida-docs"
+```
+
+Junctions work on NTFS only, for directories, on local volumes.
+Copying the directories works too, but then updates have to be re-copied.
+
+Validate: run the agent and tell it to start ida-bridge server -- it should run `ida-bridge server start`.
 
 ### IDA UI plugin
 
-Symlink the plugin file into IDA: `ln -s repo/src/ida_bridge/ida_bridge_plugin.py ~/.idapro/plugins/`.
-Install `ida_bridge` into the python environment IDA uses (`idapyswitch`, bundled with IDA, controls which one that is): `<IDA UI python> -m pip install -e .`.
+Put the plugin file where IDA looks for it, creating the `plugins` directory if it isn't there:
 
-Validate by running `import ida_bridge` in python console inside IDA.
-Restart IDA and check that you see a log line with `[ida-bridge]` in the output window.
+macOS:
+```bash
+mkdir -p ~/.idapro/plugins
+ln -s "$PWD/src/ida_bridge/ida_bridge_plugin.py" ~/.idapro/plugins/
+```
+
+Windows:
+The options are to copy the file or create a symlink.
+Copy does not update when the original file is updated by git.
+Symlink keeps it current, but needs to be run in Admin PowerShell.
+
+Create plugins directory if absent:
+```powershell
+New-Item -ItemType Directory -Force -Path "$env:APPDATA\Hex-Rays\IDA Pro\plugins" | Out-Null
+```
+
+Symlink:
+```powershell
+# run in Admin PowerShell
+# `cd` to the repo clone there first -- an elevated shell starts in system32.
+New-Item -ItemType SymbolicLink -Path "$env:APPDATA\Hex-Rays\IDA Pro\plugins\ida_bridge_plugin.py" -Target "$PWD\src\ida_bridge\ida_bridge_plugin.py"
+```
+
+OR
+
+Copy:
+```powershell
+Copy-Item "$PWD\src\ida_bridge\ida_bridge_plugin.py" "$env:APPDATA\Hex-Rays\IDA Pro\plugins\"
+```
+
+Validated by the final check below.
 
 ### IDA headless (idalib)
 
-ida-bridge contains a runner that uses `idalib` to implement headless interaction with IDA.
-The runner needs to import and use both `ida_bridge` and `idapro` (idalib package).
-Hence when running headless runner, it has to know which python to use.
+The headless runner drives IDA through `idalib`. It uses the venv from above --
+`~/.idapro/venv/bin/python3` on macOS, `~/.idapro/venv/Scripts/python.exe` on Windows -- which
+already has `ida_bridge` and `idapro` in it.
 
-By default it uses `~/.idapro/venv/bin/python3` on macOS and `~/.idapro/venv/Scripts/python.exe` on Windows.
-Having a single venv to be used by headless and IDA UI is convenient to reuse packages/plugins, etc.
-You can point the runner to a different python with `--python` argument when running `exec-idb` or `start-idalib`.
+Validated by the final check below.
 
-IDA installation comes with a pre-bundled `idapro` package and `py-activate-idalib.py`.
-- install `idapro` package in the python you are going to use with the runner
-- run `py-activate-idalib.py`
-Refer to IDA documentation for details.
+### Final check
 
-This same python also needs `ida_bridge` itself: `<IDA headless python> -m pip install -e .`.
+Proves headless and UI IDA run at once.
+IDA locks an open database, so the two instances need separate files.
 
-Validate by running: `ida-bridge supervisor start-idalib --idb path/to/idb`.
-On success it prints client id, idb path, PID and log path.
-On failure log path is printed, check it out for troubleshooting.
-
-## Windows setup
-
-`ida-setup` is macOS-only. On Windows, set up the four pieces by hand. PowerShell:
-
-IDA's per-user directory is `%APPDATA%\Hex-Rays\IDA Pro\` (the Windows equivalent of `~/.idapro/` for plugins and `ida-config.json`). The headless venv still defaults to `~/.idapro/venv` so the same layout works on both platforms.
-
-1. **Host CLI**
-
-```powershell
-uv tool install -e .
-# or: py -m pip install -e .
+macOS:
+```bash
+ida-bridge server start                                        # the bridge must run first
+ida-bridge exec-idb --input /bin/ls --arch arm64 --out-idb /tmp/ls.i64 --save   # binary -> IDB
+cp /tmp/ls.i64 /tmp/ls-ui.i64                                  # second copy, IDA locks an open IDB
+ida-bridge supervisor start-idalib --idb /tmp/ls.i64           # headless instance
+ida-bridge supervisor start-ui --idb /tmp/ls-ui.i64            # UI instance
+ida-bridge list                                                # both appear, with their client_ids
+ida-bridge supervisor stop <client_id>                         # once per client
 ```
 
-Validate: `ida-bridge server status` says the server is not running.
-
-2. **Headless venv** — one Python that can import both `idapro` and `ida_bridge`:
-
+Windows:
 ```powershell
-python -m venv "$env:USERPROFILE\.idapro\venv"
-& "$env:USERPROFILE\.idapro\venv\Scripts\python.exe" -m pip install pydantic websocket-client apsw
-& "$env:USERPROFILE\.idapro\venv\Scripts\python.exe" -m pip install -e .
+ida-bridge server start                                        # the bridge must run first
+ida-bridge exec-idb --input C:\Windows\System32\notepad.exe --out-idb "$env:TEMP\notepad.i64" --save   # binary -> IDB
+Copy-Item "$env:TEMP\notepad.i64" "$env:TEMP\notepad-ui.i64"   # second copy, IDA locks an open IDB
+ida-bridge supervisor start-idalib --idb "$env:TEMP\notepad.i64"     # headless instance
+ida-bridge supervisor start-ui --idb "$env:TEMP\notepad-ui.i64"      # UI instance
+ida-bridge list                                                # both appear, with their client_ids
+ida-bridge supervisor stop <client_id>                         # once per client
 ```
 
-Install the `idapro` package that ships with IDA (see `idalib\python\` in the IDA install), then run `py-activate-idalib.py` once so that Python can find IDA. `IDADIR` can point at a non-default install directory.
+`start-idalib` and `start-ui` print the client id, IDB path, PID and log path. On failure the log
+path is printed, check it for troubleshooting.
 
-Validate: with the bridge running (`ida-bridge server start`), `ida-bridge supervisor start-idalib --idb <path>.i64` prints a `client_id`.
+`--arch` is needed only for fat Mach-O inputs; `exec-idb` reports the available slices if omitted
+(use `x86_64` on an Intel Mac).
 
-3. **UI plugin**
+Leave the bridge server running afterwards -- that is its normal state.
 
-- Install `pydantic`, `websocket-client`, and `ida_bridge` into the Python IDA uses (`idapyswitch` selects it).
-- Copy `src\ida_bridge\ida_bridge_plugin.py` to `%APPDATA%\Hex-Rays\IDA Pro\plugins\`. Windows cannot symlink into that tree without Developer Mode; a copy is enough.
+### Troubleshooting
 
-Validate: `import ida_bridge` in IDA's Python console, then restart IDA and look for `[ida-bridge]` in the Output window.
-
-4. **start-ui** — `supervisor start-ui` auto-detects the newest `ida.exe` under Program Files (or `IDADIR`). Override with `--ida "C:\Program Files\IDA Professional 9.x\ida.exe"`.
-
-Notes:
-
-- Launching `~\.idapro\venv\Scripts\python.exe` shows two Python processes. That is CPython's venv redirector; the child is the real interpreter. `supervisor stop` kills the tree.
-- Logs default to `%LOCALAPPDATA%\ida-bridge\logs`. `IDA_BRIDGE_LOG_DIR` overrides on every platform.
-- `supervisor stop` still prefers the bridge `quit` RPC. The OS fallback is `TerminateProcess` (Windows has no SIGTERM).
+- The editable install (`uv tool install -e .` or `pip install -e .`) fails with
+  `LookupError: setuptools-scm was unable to detect version`:
+  `git` is not on PATH for that shell. Install it, or open a new shell if you installed it
+  after the shell started.
+- `import idapro` fails: idalib is not activated. Activation records the IDA install path in
+  `ida-config.json` in IDA's per-user directory; `hcli ida install --set-default` writes it, as
+  does `py-activate-idalib.py` from `idalib/python/` in the IDA install. `IDADIR` can point at a
+  non-default install directory.
+- `idapro` behaves differently than expected, or its version does not match what you installed:
+  IDA ships its own `idapro` wheel under `idalib/python/`, which can differ from the PyPI release
+  (IDA 9.4 ships 0.0.9, PyPI has 0.0.10). Check which one is in the venv with
+  `pip show idapro`.
+- Windows linking: creating a symlink needs Developer Mode or an elevated shell. A directory
+  junction (`New-Item -ItemType Junction`) needs neither, which is why the skill directories are
+  linked that way; junctions cannot link a single file, so the plugin is symlinked from an
+  elevated shell or copied.
 
 ## How it works
 

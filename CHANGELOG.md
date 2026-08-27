@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Added
-- Windows support for the host CLI: `server`, `exec`, `exec-idb`, and `supervisor start-ui` / `start-idalib` / `stop` / `save`. Platform-aware log directory, process control, server PID discovery, IDB lock probe, and IDA install detection. `ida-setup` remains macOS-only; see README "Windows setup".
+- Windows support for the host CLI: `server`, `exec`, `exec-idb`, and `supervisor start-ui` / `start-idalib` / `stop` / `save`. Platform-aware log directory, process control, server PID discovery, IDB lock probe, and IDA install detection. `ida-setup` remains macOS-only; see README "Manual setup".
 
 ### Changed
 - Prerequisites are no longer macOS-only.
