@@ -6,6 +6,7 @@ assertions read the runner's stderr instead of the CLI's log-file indirection.
 
 import asyncio
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -96,7 +97,7 @@ class TestIdalibRunnerOverwriteSafety:
                 result = await asyncio.to_thread(run_idalib_runner_to_exit, live_bridge, idb=target)
 
             assert result.returncode == 2, f"expected refusal, got: {result.stdout}\n{result.stderr}"
-            assert "lock-held" in result.stderr
+            assert "is held by another process" in result.stderr
             assert "ida-bridge list" in result.stderr
 
             # Victim session must still be alive and functional.
@@ -112,6 +113,32 @@ class TestIdalibRunnerOverwriteSafety:
                 assert resp.result > 0
         finally:
             terminate_idalib(proc)
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="POSIX unlinks files that are open")
+    async def test_held_packed_idb_overwrite_refused(
+        self, live_bridge: BridgeInfo, small_macho_arm64: Path, tmp_path: Path
+    ) -> None:
+        """A packed .i64 held open by any process is undeletable on Windows while
+        staying readable, so the lock probe misses it. The unlink must still be
+        reported as a refusal, not raised as an unlink traceback."""
+        proc, target = spawn_idalib(live_bridge, tmp_path, binary_path=small_macho_arm64)
+        client_id = (await wait_for_idalib(live_bridge, proc, idb_path=target)).client_id
+        await shutdown_and_save(live_bridge, client_id, proc)
+        assert target.exists(), "expected a packed .i64 after save+quit"
+
+        with target.open("rb"):
+            result = await asyncio.to_thread(
+                run_idalib_runner_to_exit,
+                live_bridge,
+                input_file=small_macho_arm64,
+                out_idb=target,
+                force=True,
+            )
+
+        assert result.returncode == 2, f"expected refusal, got: {result.stdout}\n{result.stderr}"
+        assert "is held by another process" in result.stderr
+        assert "ida-bridge list" in result.stderr
+        assert target.exists(), "held target must survive the refused overwrite"
 
     async def test_companions_only_leftover_overwrite(
         self, live_bridge: BridgeInfo, small_macho_arm64: Path, tmp_path: Path

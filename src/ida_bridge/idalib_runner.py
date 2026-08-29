@@ -39,6 +39,7 @@ def _die(msg: str, *, code: int = 2) -> NoReturn:
 # repacks back into the single .i64/.idb on save/close). IDA holds an exclusive
 # OS lock on these while live, but not on the packed .i64/.idb itself.
 _IDB_COMPANION_SUFFIXES = (".id0", ".id1", ".id2", ".nam", ".til")
+_ERROR_SHARING_VIOLATION = 32
 
 
 def _is_locked(path: Path) -> bool:
@@ -103,11 +104,11 @@ def _idb_exists(path: Path) -> bool:
     return path.exists() or any(path.with_suffix(s).exists() for s in _IDB_COMPANION_SUFFIXES)
 
 
-def _in_use_hint(locked: Path) -> str:
-    """Diagnostic hint for a companion file already found to be currently locked."""
+def _in_use_hint(path: Path) -> str:
+    """Diagnostic hint for a file another process is holding."""
     return (
-        f"\nHint: {locked.name} is currently lock-held by another process, meaning another "
-        "idalib/IDA session has this database open right now. Close it first (see `ida-bridge list`)."
+        f"\nHint: {path.name} is held by another process, most likely another idalib/IDA "
+        "session with this database open. Close it first (see `ida-bridge list`)."
     )
 
 
@@ -124,9 +125,15 @@ def _remove_idb(path: Path) -> None:
     locked = _locked_companion(path)
     if locked is not None:
         _die(f"refusing to overwrite {path}: it looks currently open elsewhere.{_in_use_hint(locked)}")
-    path.unlink(missing_ok=True)
-    for suffix in _IDB_COMPANION_SUFFIXES:
-        path.with_suffix(suffix).unlink(missing_ok=True)
+    for target in (path, *(path.with_suffix(s) for s in _IDB_COMPANION_SUFFIXES)):
+        try:
+            target.unlink(missing_ok=True)
+        except PermissionError as exc:
+            # Windows will not unlink a file another process holds open, which the
+            # probe above cannot predict: a held packed .i64 stays readable.
+            if getattr(exc, "winerror", None) != _ERROR_SHARING_VIOLATION:
+                raise
+            _die(f"refusing to overwrite {path}.{_in_use_hint(target)}")
 
 
 # Third-party deps expected to be installed into the python used to run this
