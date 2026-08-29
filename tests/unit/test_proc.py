@@ -43,6 +43,20 @@ class TestIsPidAlive:
     def test_returns_true_for_own_process(self) -> None:
         assert is_pid_alive(os.getpid())
 
+    @pytest.mark.skipif(sys.platform != "win32", reason="OpenProcess access check is Windows-only")
+    def test_access_denied_counts_as_alive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A process this token cannot open is not dead: callers prune logs and skip kills on False."""
+        import ctypes
+
+        from ida_bridge import proc
+
+        def denied(_access: int, _inherit: bool, _pid: int) -> int:
+            ctypes.set_last_error(5)  # ERROR_ACCESS_DENIED
+            return 0
+
+        monkeypatch.setattr(proc._kernel32, "OpenProcess", denied)
+        assert proc.is_pid_alive(os.getpid())
+
     def test_probe_does_not_kill_live_process(self) -> None:
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
         try:

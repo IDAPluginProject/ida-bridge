@@ -30,6 +30,7 @@ if _IS_WINDOWS:
     _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
     _PROCESS_TERMINATE = 0x0001
     _STILL_ACTIVE = 259
+    _ERROR_ACCESS_DENIED = 5
     _TH32CS_SNAPPROCESS = 0x00000002
     _INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
 
@@ -82,10 +83,12 @@ def _is_pid_alive_windows(pid: int) -> bool:
     """Liveness via OpenProcess + GetExitCodeProcess.
 
     ``os.kill(pid, 0)`` is not a probe on Windows: ``os.kill`` terminates.
+    Access-denied counts as alive, as ``PermissionError`` does on POSIX.
     """
     handle = _kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not handle:
-        return False
+        # The process exists, this token just cannot open it (other user, elevated, protected).
+        return ctypes.get_last_error() == _ERROR_ACCESS_DENIED
     try:
         code = wintypes.DWORD()
         if not _kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
