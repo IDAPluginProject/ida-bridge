@@ -325,4 +325,4 @@ async def make_runner(
         async with open_agent_client(client_id=agent_id, url=bridge_info.url) as agent:
             yield SqlRunner(agent, ready.client_id, session_id=agent_id)
     finally:
-        terminate_idalib(proc)
+        terminate_idalib(process)
