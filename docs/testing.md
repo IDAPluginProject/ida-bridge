@@ -2,6 +2,8 @@
 
 ## Test scope
 
+Unit and integration are OS-agnostic; e2e runs on macOS and Windows, with fixtures generated on macOS.
+
 ### Unit (`tests/unit/`)
 
 Pure logic; no IDA.
@@ -74,20 +76,20 @@ Some behavior tests reference a specific named binary from `bins/` instead of th
 
 ### Fixture generation
 
-Requires `clang`/`clang++`/`lipo`/`strip` and a running bridge server that `exec-idb` connects to.
-Host unit and integration tests are OS-agnostic and run on macOS and Windows.
-E2E and fixture generation still need a working idalib install; the committed fixture sources are Mach-O and are built with the macOS toolchain above.
-
-`tests/fixtures/build.py` is the fixture generator; a fresh checkout runs it once to populate `idbs/`:
+`tests/fixtures/build.py` populates `bins/` and `idbs/`; a fresh checkout runs it once:
 
 - compiles `src/*.c[pp]` into a variant matrix under `bins/` (arch / opt / stripped / debug)
 - drives `ida-bridge exec-idb` to create IDBs under `idbs/`
-- both `bins/` and `idbs/` are gitignored
+
+Needs `clang`/`clang++`/`lipo`/`strip` and a running bridge server for `exec-idb`.
+The binaries it produces are Mach-O, so generation runs on macOS.
 
 ```bash
 uv run python tests/fixtures/build.py            # build missing/stale
 uv run python tests/fixtures/build.py --force     # rebuild everything
 ```
+
+Elsewhere, copy `bins/` and `idbs/` from a machine that can generate them.
 
 ### Adding a fixture
 
@@ -127,7 +129,7 @@ Useful fixture types to add:
 
 ### Coverage gaps
 
-- Windows-built e2e fixture binaries (current sources are Mach-O / lipo)
+- no PE/ELF fixture targets
 - raw blob/shellcode loader path
 - 32-bit `.idb` open path
 - IDA 8.x `.i64` migration/open path
