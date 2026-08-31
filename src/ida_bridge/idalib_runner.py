@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # IMPORTANT: idalib requires `import idapro` to be the first import.
 import argparse
-import fcntl
 import logging
 import os
 from pathlib import Path
@@ -37,22 +36,42 @@ def _die(msg: str, *, code: int = 2) -> NoReturn:
 
 
 # Companion files IDA unpacks a database into while a session has it open (and
-# repacks back into the single .i64/.idb on save/close). IDA holds an OS advisory
-# lock (flock) on these while live, but not on the packed .i64/.idb itself.
+# repacks back into the single .i64/.idb on save/close). IDA holds an exclusive
+# OS lock on these while live, but not on the packed .i64/.idb itself.
 _IDB_COMPANION_SUFFIXES = (".id0", ".id1", ".id2", ".nam", ".til")
+_ERROR_SHARING_VIOLATION = 32
 
 
 def _is_locked(path: Path) -> bool:
-    """True if *path* is currently held under an exclusive OS advisory lock (flock).
+    """True if *path* is currently held under an exclusive OS lock.
 
-    Only ``BlockingIOError`` (lock unavailable) counts as "locked": any other
-    failure while probing propagates rather than silently treating an unrelated
-    error (e.g. a filesystem that doesn't support flock) as "not locked" and
-    letting a caller proceed to delete something it couldn't actually verify
-    was safe to delete.
+    POSIX: ``fcntl.flock``. Only ``BlockingIOError`` counts as locked; other
+    probe failures propagate so we never treat "could not check" as "safe".
+
+    Windows: IDA opens companions with share mode 0, so another open fails
+    with ``PermissionError`` (sharing violation). That is the locked case.
     """
     if not path.exists():
         return False
+    if sys.platform == "win32":
+        return _is_locked_windows(path)
+    return _is_locked_posix(path)
+
+
+def _is_locked_windows(path: Path) -> bool:
+    try:
+        fd = os.open(str(path), os.O_RDONLY)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    os.close(fd)
+    return False
+
+
+def _is_locked_posix(path: Path) -> bool:
+    import fcntl
+
     try:
         fd = os.open(str(path), os.O_RDONLY)
     except OSError:
@@ -85,11 +104,11 @@ def _idb_exists(path: Path) -> bool:
     return path.exists() or any(path.with_suffix(s).exists() for s in _IDB_COMPANION_SUFFIXES)
 
 
-def _in_use_hint(locked: Path) -> str:
-    """Diagnostic hint for a companion file already found to be currently locked."""
+def _in_use_hint(path: Path) -> str:
+    """Diagnostic hint for a file another process is holding."""
     return (
-        f"\nHint: {locked.name} is currently lock-held by another process, meaning another "
-        "idalib/IDA session has this database open right now. Close it first (see `ida-bridge list`)."
+        f"\nHint: {path.name} is held by another process, most likely another idalib/IDA "
+        "session with this database open. Close it first (see `ida-bridge list`)."
     )
 
 
@@ -106,9 +125,15 @@ def _remove_idb(path: Path) -> None:
     locked = _locked_companion(path)
     if locked is not None:
         _die(f"refusing to overwrite {path}: it looks currently open elsewhere.{_in_use_hint(locked)}")
-    path.unlink(missing_ok=True)
-    for suffix in _IDB_COMPANION_SUFFIXES:
-        path.with_suffix(suffix).unlink(missing_ok=True)
+    for target in (path, *(path.with_suffix(s) for s in _IDB_COMPANION_SUFFIXES)):
+        try:
+            target.unlink(missing_ok=True)
+        except PermissionError as exc:
+            # Windows will not unlink a file another process holds open, which the
+            # probe above cannot predict: a held packed .i64 stays readable.
+            if getattr(exc, "winerror", None) != _ERROR_SHARING_VIOLATION:
+                raise
+            _die(f"refusing to overwrite {path}.{_in_use_hint(target)}")
 
 
 # Third-party deps expected to be installed into the python used to run this
@@ -118,7 +143,8 @@ try:
 except Exception as exc:  # pragma: no cover
     _die(
         "missing python deps for idalib runner: pydantic, websocket-client\n"
-        "Fix: use the ida-setup skill to install them into the python you pass to start-idalib.\n"
+        "Fix: install them into the python you pass to start-idalib "
+        "(see README manual setup).\n"
         f"Import error: {exc}"
     )
 

@@ -110,10 +110,10 @@ async def idalib_instance(
     proc, out_idb = spawn_idalib(live_bridge, tmp_path, binary_path=small_macho_arm64)
 
     try:
-        client_id = await wait_for_idalib(live_bridge, proc)
+        ready = await wait_for_idalib(live_bridge, proc, idb_path=out_idb)
         yield IdalibInstance(
-            client_id=client_id,
-            pid=proc.pid,
+            client_id=ready.client_id,
+            pid=ready.pid,
             process=proc,
             out_idb=out_idb,
             bridge=live_bridge,
@@ -151,10 +151,10 @@ async def shared_idalib(
     async for bridge in start_bridge():
         proc, out_idb = spawn_idalib(bridge, _module_tmp_dir, binary_path=_module_binary)
         try:
-            client_id = await wait_for_idalib(bridge, proc)
+            ready = await wait_for_idalib(bridge, proc, idb_path=out_idb)
             yield IdalibInstance(
-                client_id=client_id,
-                pid=proc.pid,
+                client_id=ready.client_id,
+                pid=ready.pid,
                 process=proc,
                 out_idb=out_idb,
                 bridge=bridge,
@@ -186,10 +186,10 @@ async def shared_idalib_fat_arm64(
     async for bridge in start_bridge():
         proc, out_idb = spawn_idalib(bridge, work_dir, binary_path=_module_fat_binary, arch="arm64")
         try:
-            client_id = await wait_for_idalib(bridge, proc)
+            ready = await wait_for_idalib(bridge, proc, idb_path=out_idb)
             yield IdalibInstance(
-                client_id=client_id,
-                pid=proc.pid,
+                client_id=ready.client_id,
+                pid=ready.pid,
                 process=proc,
                 out_idb=out_idb,
                 bridge=bridge,
@@ -210,10 +210,10 @@ async def shared_idalib_fat_x86_64(
     async for bridge in start_bridge():
         proc, out_idb = spawn_idalib(bridge, work_dir, binary_path=_module_fat_binary, arch="x86_64")
         try:
-            client_id = await wait_for_idalib(bridge, proc)
+            ready = await wait_for_idalib(bridge, proc, idb_path=out_idb)
             yield IdalibInstance(
-                client_id=client_id,
-                pid=proc.pid,
+                client_id=ready.client_id,
+                pid=ready.pid,
                 process=proc,
                 out_idb=out_idb,
                 bridge=bridge,
@@ -242,8 +242,8 @@ async def shared_idalib_idb(
     async for bridge1 in start_bridge():
         proc1, idb_path = spawn_idalib(bridge1, _module_tmp_dir, binary_path=_module_binary)
         try:
-            client_id1 = await wait_for_idalib(bridge1, proc1)
-            await shutdown_and_save(bridge1, client_id1, proc1)
+            ready1 = await wait_for_idalib(bridge1, proc1, idb_path=idb_path)
+            await shutdown_and_save(bridge1, ready1.client_id, proc1)
         except BaseException:
             terminate_idalib(proc1)
             raise
@@ -255,10 +255,10 @@ async def shared_idalib_idb(
     async for bridge2 in start_bridge():
         proc2, _ = spawn_idalib(bridge2, _module_tmp_dir, idb_path=idb_path)
         try:
-            client_id2 = await wait_for_idalib(bridge2, proc2)
+            ready2 = await wait_for_idalib(bridge2, proc2, idb_path=idb_path)
             yield IdalibInstance(
-                client_id=client_id2,
-                pid=proc2.pid,
+                client_id=ready2.client_id,
+                pid=ready2.pid,
                 process=proc2,
                 out_idb=idb_path,
                 bridge=bridge2,
@@ -296,10 +296,12 @@ async def generic_idalib(idb_fixture: IdbFixture) -> AsyncIterator[GenericIdalib
         async for bridge in start_bridge():
             proc, _ = spawn_idalib(bridge, tmp_dir, idb_path=idb_copy)
             try:
-                client_id = await wait_for_idalib(bridge, proc)
+                ready = await wait_for_idalib(bridge, proc, idb_path=idb_copy)
                 agent_id = f"e2e-generic-{idb_fixture.name}"
                 async with open_agent_client(client_id=agent_id, url=bridge.url) as agent:
-                    yield GenericIdalib(runner=SqlRunner(agent, client_id, session_id=agent_id), fixture=idb_fixture)
+                    yield GenericIdalib(
+                        runner=SqlRunner(agent, ready.client_id, session_id=agent_id), fixture=idb_fixture
+                    )
             finally:
                 terminate_idalib(proc)
     finally:
@@ -316,10 +318,12 @@ async def generic_idalib_w(idb_fixture: IdbFixture) -> AsyncIterator[GenericIdal
         async for bridge in start_bridge():
             proc, _ = spawn_idalib(bridge, tmp_dir, idb_path=idb_copy)
             try:
-                client_id = await wait_for_idalib(bridge, proc)
+                ready = await wait_for_idalib(bridge, proc, idb_path=idb_copy)
                 agent_id = f"e2e-generic-w-{idb_fixture.name}"
                 async with open_agent_client(client_id=agent_id, url=bridge.url) as agent:
-                    yield GenericIdalib(runner=SqlRunner(agent, client_id, session_id=agent_id), fixture=idb_fixture)
+                    yield GenericIdalib(
+                        runner=SqlRunner(agent, ready.client_id, session_id=agent_id), fixture=idb_fixture
+                    )
             finally:
                 terminate_idalib(proc)
     finally:

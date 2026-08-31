@@ -6,6 +6,7 @@ assertions read the runner's stderr instead of the CLI's log-file indirection.
 
 import asyncio
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -31,7 +32,7 @@ class TestIdalibRunnerOverwriteSafety:
         # Produce a stale target: a real packed .i64, cleanly closed and no longer
         # open (save+quit) -- distinct from the live-session and companions-only cases.
         proc, target = spawn_idalib(live_bridge, tmp_path, binary_path=small_macho_arm64)
-        client_id = await wait_for_idalib(live_bridge, proc)
+        client_id = (await wait_for_idalib(live_bridge, proc, idb_path=target)).client_id
         await shutdown_and_save(live_bridge, client_id, proc)
         assert target.exists(), "expected a packed .i64 after save+quit"
         before = target.read_bytes()
@@ -51,7 +52,7 @@ class TestIdalibRunnerOverwriteSafety:
         proc2, target2 = spawn_idalib(live_bridge, tmp_path, binary_path=small_macho_arm64)
         assert target2 == target
         try:
-            await wait_for_idalib(live_bridge, proc2)
+            await wait_for_idalib(live_bridge, proc2, idb_path=target2)
         finally:
             terminate_idalib(proc2)
 
@@ -77,12 +78,12 @@ class TestIdalibRunnerOverwriteSafety:
             proc, target = spawn_idalib(live_bridge, tmp_path, binary_path=small_macho_arm64)
         else:
             setup_proc, target = spawn_idalib(live_bridge, tmp_path, binary_path=small_macho_arm64)
-            setup_client_id = await wait_for_idalib(live_bridge, setup_proc)
+            setup_client_id = (await wait_for_idalib(live_bridge, setup_proc, idb_path=target)).client_id
             await shutdown_and_save(live_bridge, setup_client_id, setup_proc)
             proc, _ = spawn_idalib(live_bridge, tmp_path, idb_path=target)
 
         try:
-            client_id = await wait_for_idalib(live_bridge, proc)
+            client_id = (await wait_for_idalib(live_bridge, proc, idb_path=target)).client_id
 
             if attack == "force_overwrite":
                 result = await asyncio.to_thread(
@@ -96,7 +97,7 @@ class TestIdalibRunnerOverwriteSafety:
                 result = await asyncio.to_thread(run_idalib_runner_to_exit, live_bridge, idb=target)
 
             assert result.returncode == 2, f"expected refusal, got: {result.stdout}\n{result.stderr}"
-            assert "lock-held" in result.stderr
+            assert "is held by another process" in result.stderr
             assert "ida-bridge list" in result.stderr
 
             # Victim session must still be alive and functional.
@@ -113,6 +114,32 @@ class TestIdalibRunnerOverwriteSafety:
         finally:
             terminate_idalib(proc)
 
+    @pytest.mark.skipif(sys.platform != "win32", reason="POSIX unlinks files that are open")
+    async def test_held_packed_idb_overwrite_refused(
+        self, live_bridge: BridgeInfo, small_macho_arm64: Path, tmp_path: Path
+    ) -> None:
+        """A packed .i64 held open by any process is undeletable on Windows while
+        staying readable, so the lock probe misses it. The unlink must still be
+        reported as a refusal, not raised as an unlink traceback."""
+        proc, target = spawn_idalib(live_bridge, tmp_path, binary_path=small_macho_arm64)
+        client_id = (await wait_for_idalib(live_bridge, proc, idb_path=target)).client_id
+        await shutdown_and_save(live_bridge, client_id, proc)
+        assert target.exists(), "expected a packed .i64 after save+quit"
+
+        with target.open("rb"):
+            result = await asyncio.to_thread(
+                run_idalib_runner_to_exit,
+                live_bridge,
+                input_file=small_macho_arm64,
+                out_idb=target,
+                force=True,
+            )
+
+        assert result.returncode == 2, f"expected refusal, got: {result.stdout}\n{result.stderr}"
+        assert "is held by another process" in result.stderr
+        assert "ida-bridge list" in result.stderr
+        assert target.exists(), "held target must survive the refused overwrite"
+
     async def test_companions_only_leftover_overwrite(
         self, live_bridge: BridgeInfo, small_macho_arm64: Path, tmp_path: Path
     ) -> None:
@@ -120,7 +147,7 @@ class TestIdalibRunnerOverwriteSafety:
         with no packed .i64 at all -- the overwrite gate must catch that state, not
         only a packed file."""
         proc, target = spawn_idalib(live_bridge, tmp_path, binary_path=small_macho_arm64)
-        await wait_for_idalib(live_bridge, proc)
+        await wait_for_idalib(live_bridge, proc, idb_path=target)
         # Kill (not graceful terminate): close_database() is only reached via the
         # request loop exiting, which we're bypassing entirely -- so this
         # deterministically leaves companions with no packed file, regardless of
@@ -146,6 +173,6 @@ class TestIdalibRunnerOverwriteSafety:
         proc2, target2 = spawn_idalib(live_bridge, tmp_path, binary_path=small_macho_arm64)
         assert target2 == target
         try:
-            await wait_for_idalib(live_bridge, proc2)
+            await wait_for_idalib(live_bridge, proc2, idb_path=target2)
         finally:
             terminate_idalib(proc2)

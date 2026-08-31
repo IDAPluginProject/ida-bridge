@@ -38,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     p_start.add_argument(
         "--ida",
         default=None,
-        help="Path to an IDA .app bundle (default: auto-detect latest via Spotlight)",
+        help="Path to IDA (macOS .app or Windows ida.exe). Default: auto-detect",
     )
     p_start.add_argument(
         "--wait-s",
@@ -56,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
     p_idalib.add_argument(
         "--python",
         default=None,
-        help="Path to a python with idapro + deps installed (default: ~/.idapro/venv/bin/python3)",
+        help="Path to a python with idapro + deps installed (default: ~/.idapro/venv)",
     )
     g2 = p_idalib.add_mutually_exclusive_group(required=True)
     g2.add_argument("--idb", help="Path to an existing IDB (.i64/.idb)")
@@ -81,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_idalib.set_defaults(func=cmd_start_idalib)
 
-    p_stop = sub.add_parser("stop", parents=[common], help="Stop an instance (graceful quit, then SIGTERM/SIGKILL)")
+    p_stop = sub.add_parser("stop", parents=[common], help="Stop an instance (graceful quit, then OS terminate)")
     p_stop.add_argument("target", help="client_id or pid")
     p_stop.set_defaults(func=cmd_stop)
 

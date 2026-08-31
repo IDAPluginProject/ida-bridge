@@ -1,11 +1,22 @@
 """Unit tests for supervisor command validation."""
 
 from pathlib import Path
+import sys
 from unittest.mock import patch
 
 import pytest
 
-from ida_bridge.supervisor.commands import StartError, start_idalib
+from ida_bridge.supervisor.commands import StartError, default_idalib_python, start_idalib
+
+
+class TestDefaultIdalibPython:
+    def test_uses_venv_layout_for_platform(self) -> None:
+        path = default_idalib_python()
+        assert path.parent.parent.name == "venv"
+        if sys.platform == "win32":
+            assert path.parts[-2:] == ("Scripts", "python.exe")
+        else:
+            assert path.parts[-2:] == ("bin", "python3")
 
 
 def _thin_macho() -> bytes:

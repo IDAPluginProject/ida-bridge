@@ -4,12 +4,13 @@ import asyncio
 from collections.abc import Callable
 import os
 from pathlib import Path
+import sys
 import time
 
 import pytest
 
 from ida_bridge import logs
-from ida_bridge.logs import prune_instance_logs
+from ida_bridge.logs import _default_log_dir, _pid_from_instance_log, prune_instance_logs
 from ida_bridge.server import BridgeServer
 
 
@@ -18,8 +19,18 @@ def _touch(path: Path, mtime: float) -> None:
     os.utime(path, (mtime, mtime))
 
 
+class TestDefaultLogDir:
+    def test_respects_platform(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("IDA_BRIDGE_LOG_DIR", raising=False)
+        if sys.platform == "win32":
+            monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\test\AppData\Local")
+            assert _default_log_dir() == Path(r"C:\Users\test\AppData\Local") / "ida-bridge" / "logs"
+        else:
+            assert _default_log_dir() == Path.home() / "Library" / "Logs" / "ida-bridge"
+
+
 class TestPruneInstanceLogs:
-    """Dead pids use values above macOS pid_max (99999) so they are reliably not alive."""
+    """Dead pids use values far above typical pid_max so they are reliably not alive."""
 
     def test_keeps_newest_dead_per_prefix(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("IDA_BRIDGE_LOG_DIR", str(tmp_path))
@@ -58,6 +69,37 @@ class TestPruneInstanceLogs:
     def test_no_raise_when_dir_missing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("IDA_BRIDGE_LOG_DIR", str(tmp_path / "nope"))
         prune_instance_logs()  # best-effort: must not raise
+
+    def test_starting_placeholder_is_not_a_pid(self) -> None:
+        path = Path("idalib-starting-1710000000.log")
+        assert _pid_from_instance_log("idalib", path) is None
+        assert _pid_from_instance_log("idalib", Path("idalib-4321.log")) == 4321
+
+    def test_unheld_starting_logs_are_pruned(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("IDA_BRIDGE_LOG_DIR", str(tmp_path))
+        monkeypatch.setattr("ida_bridge.logs.LOG_KEEP", 1)
+        monkeypatch.setattr("ida_bridge.logs._file_held", lambda _p: False)
+        base = time.time()
+        _touch(tmp_path / "idalib-starting-100.log", base)
+        _touch(tmp_path / "idalib-starting-200.log", base + 1)
+        _touch(tmp_path / "idalib-starting-300.log", base + 2)
+        prune_instance_logs()
+        remaining = sorted(p.name for p in tmp_path.glob("idalib-*.log"))
+        assert remaining == ["idalib-starting-300.log"]
+
+    def test_held_starting_log_is_kept(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("IDA_BRIDGE_LOG_DIR", str(tmp_path))
+        monkeypatch.setattr("ida_bridge.logs.LOG_KEEP", 1)
+        held = tmp_path / "idalib-starting-100.log"
+        _touch(held, time.time())
+        _touch(tmp_path / "idalib-starting-200.log", time.time() + 1)
+        _touch(tmp_path / "idalib-starting-300.log", time.time() + 2)
+        monkeypatch.setattr("ida_bridge.logs._file_held", lambda p: p == held)
+        prune_instance_logs()
+        names = {p.name for p in tmp_path.glob("idalib-*.log")}
+        assert held.name in names
+        assert "idalib-starting-300.log" in names
+        assert "idalib-starting-200.log" not in names
 
 
 async def _wait_until(predicate: Callable[[], bool], *, timeout_s: float = 2.0) -> bool:
