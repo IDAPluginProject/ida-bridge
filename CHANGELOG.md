@@ -2,8 +2,11 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-01
+
 ### Added
 - Windows support for the host CLI: `server`, `exec`, `exec-idb`, and `supervisor start-ui` / `start-idalib` / `stop` / `save`. Platform-aware log directory, process control, server PID discovery, IDB lock probe, and IDA install detection. `ida-setup` remains macOS-only; see README "Manual setup".
+  Contributed by @T3rm1at0r in https://github.com/cellebrite-labs/ida-bridge/pull/2.
 
 ### Changed
 - Prerequisites are no longer macOS-only.
