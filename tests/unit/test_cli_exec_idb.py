@@ -253,9 +253,7 @@ class TestArgValidation:
         assert mocks["start"].call_args.kwargs["dyld_module"] == "/usr/lib/system/libcompiler_rt.dylib"
 
     def test_passes_skip_initial_auto_analysis(self) -> None:
-        _, mocks = _run_with(
-            _patches(exec_rv=_ok_response(result=1)), [*_IDB_ARGS, "--skip-initial-auto-analysis"]
-        )
+        _, mocks = _run_with(_patches(exec_rv=_ok_response(result=1)), [*_IDB_ARGS, "--skip-initial-auto-analysis"])
         assert mocks["start"].call_args.kwargs["skip_initial_auto_analysis"] is True
 
     def test_default_does_not_skip_initial_auto_analysis(self) -> None:
