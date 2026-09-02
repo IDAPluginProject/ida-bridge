@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- `--skip-initial-auto-analysis` on `start-idalib` and `exec-idb`: skip the runner's initial `ida_auto.auto_wait()` so we can deal with a malformed input that hangs auto-analysis.
+
 ## [0.5.0] - 2026-09-01
 
 ### Added

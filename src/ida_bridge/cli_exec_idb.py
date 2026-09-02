@@ -39,6 +39,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--wait-s", default=300.0, type=float, help="Max seconds to wait for analysis + bridge connect (default: 300s)"
     )
+    parser.add_argument(
+        "--skip-initial-auto-analysis",
+        action="store_true",
+        help="Skip initial auto-analysis before connecting (the IDB stays mostly unexplored).",
+    )
 
     parser.add_argument("--sql", help="SQL query (runs before --file and --code, result in _result_)")
     parser.add_argument("--code", "-c", help="Python code to execute (runs after --file, if provided)")
@@ -66,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
             dyld_module=args.dyld_module,
             python=args.python,
             wait_s=args.wait_s,
+            skip_initial_auto_analysis=args.skip_initial_auto_analysis,
         )
     except StartError as exc:
         print(str(exc), file=sys.stderr)
@@ -73,7 +79,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if result.client_id is None:
         print(
-            f"idalib started (pid={result.pid}) but did not connect within {args.wait_s}s\nlog: {result.log_path}",
+            f"idalib started (pid={result.pid}) but did not connect within {args.wait_s}s\nlog: {result.log_path}\n"
+            "If you suspect the binary is malformed and analysis hangs, "
+            "run again with --skip-initial-auto-analysis.",
             file=sys.stderr,
         )
         terminate_pid(result.pid)

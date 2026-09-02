@@ -186,6 +186,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         type=float,
         help="Fail if the bridge handshake does not complete within this timeout",
     )
+    parser.add_argument(
+        "--skip-initial-auto-analysis",
+        action="store_true",
+        help="Skip initial auto-analysis before connecting (the IDB stays mostly unexplored).",
+    )
 
     ns = parser.parse_args(argv)
 
@@ -302,9 +307,11 @@ def run_worker(args: argparse.Namespace) -> int:
     handler: RequestHandler | None = None
 
     try:
-        # Wait for analysis before advertising ourselves to the bridge.
-        log.info("waiting for auto-analysis: %s", idb_path)
-        ida_auto.auto_wait()
+        if args.skip_initial_auto_analysis:
+            log.warning("skipping initial auto-analysis: %s (the IDB stays mostly unexplored)", idb_path)
+        else:
+            log.info("waiting for auto-analysis: %s", idb_path)
+            ida_auto.auto_wait()
 
         if signal_shutdown:
             return 0

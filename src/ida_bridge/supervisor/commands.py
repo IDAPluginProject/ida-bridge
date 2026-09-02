@@ -269,6 +269,7 @@ def start_idalib(
     dyld_module: str | None = None,
     python: str | None = None,
     wait_s: float = 300.0,
+    skip_initial_auto_analysis: bool = False,
 ) -> IdalibStartResult:
     """Start an idalib worker and poll until it connects to the bridge.
 
@@ -334,6 +335,8 @@ def start_idalib(
             runner_args.extend(["--arch", arch])
         if dyld_module:
             runner_args.extend(["--dyld-module", dyld_module])
+    if skip_initial_auto_analysis:
+        runner_args.append("--skip-initial-auto-analysis")
 
     # Start with a placeholder log, then bind it to the pid once the process exists.
     tmp_log = _starting_log_path("idalib")
@@ -417,6 +420,7 @@ def cmd_start_idalib(args: argparse.Namespace) -> int:
             dyld_module=args.dyld_module,
             python=args.python,
             wait_s=float(args.wait_s),
+            skip_initial_auto_analysis=args.skip_initial_auto_analysis,
         )
     except StartError as exc:
         print(str(exc), file=sys.stderr)
@@ -425,7 +429,9 @@ def cmd_start_idalib(args: argparse.Namespace) -> int:
     if result.client_id is None:
         print(
             f"idalib runner started (pid={result.pid}) but did not connect to the bridge within {args.wait_s}s.\n"
-            "This is expected for large binaries (auto-analysis must complete first).",
+            "This is expected for large binaries (initial auto-analysis takes time).\n"
+            "If you suspect the binary is malformed and analysis hangs, stop it "
+            f"(`ida-bridge supervisor stop {result.pid}`), then start again with --skip-initial-auto-analysis.",
             file=sys.stderr,
         )
         _output(

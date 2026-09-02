@@ -79,6 +79,11 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         help="Max seconds to wait for analysis + bridge connect (default: 300s)",
     )
+    p_idalib.add_argument(
+        "--skip-initial-auto-analysis",
+        action="store_true",
+        help="Skip initial auto-analysis before connecting (the IDB stays mostly unexplored).",
+    )
     p_idalib.set_defaults(func=cmd_start_idalib)
 
     p_stop = sub.add_parser("stop", parents=[common], help="Stop an instance (graceful quit, then OS terminate)")

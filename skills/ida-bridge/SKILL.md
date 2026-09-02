@@ -29,7 +29,7 @@ Multiple IDA instances can connect to the bridge, but you target a specific inst
 - Both start commands wait until the IDA instance connects to the bridge.
 - On connection, they print instance info: `client_id`, `idb_path`, `pid`, `log`. No need to sleep or list afterwards -- read `client_id` from the output and continue.
 - UI IDA connects as soon as the IDB is open but continues auto-analysis. For new IDBs, if results look incomplete, run `import ida_auto; ida_auto.auto_wait()` in exec.
-- idalib waits for auto-analysis to finish before connecting -- it is ready to query on arrival.
+- idalib waits for auto-analysis to finish before connecting -- it is ready to query on arrival. For malformed input that hangs analysis, skip it with the `--skip-initial-auto-analysis` flag; expect a mostly unexplored IDB.
 - CLI waits up to 300s for the first client connection. Override with `--wait-s` for large binaries. If the wait expires (`status: waiting`, no `client_id`), analysis is still running -- find the instance with `ida-bridge list` once it connects instead of restarting.
 
 ### Lifecycle
