@@ -82,8 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     p_idalib.add_argument(
         "--skip-initial-auto-analysis",
         action="store_true",
-        help="Skip initial auto-analysis before connecting. "
-        "Analysis may be incomplete. For poisoned/non-finishing IDBs.",
+        help="Skip initial auto-analysis before connecting (the IDB stays mostly unexplored).",
     )
     p_idalib.set_defaults(func=cmd_start_idalib)
 

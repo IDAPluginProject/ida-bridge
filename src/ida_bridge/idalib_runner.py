@@ -189,8 +189,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--skip-initial-auto-analysis",
         action="store_true",
-        help="Skip initial auto-analysis before connecting. "
-        "Analysis may be incomplete. For poisoned/non-finishing IDBs.",
+        help="Skip initial auto-analysis before connecting (the IDB stays mostly unexplored).",
     )
 
     ns = parser.parse_args(argv)
@@ -234,19 +233,6 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         _die("--connect-timeout-s must be > 0")
 
     return ns
-
-
-def _wait_for_analysis(idb_path: str, *, skip_initial_auto_analysis: bool) -> None:
-    """Wait for IDA auto-analysis before advertising the client.
-
-    Default is ``ida_auto.auto_wait()``: block until initial analysis completes.
-    ``--skip-initial-auto-analysis`` connects without driving that wait.
-    """
-    if skip_initial_auto_analysis:
-        log.warning("skipping initial auto-analysis: %s (results may be incomplete)", idb_path)
-        return
-    log.info("waiting for auto-analysis: %s", idb_path)
-    ida_auto.auto_wait()
 
 
 def _open_database(args: argparse.Namespace) -> str:
@@ -321,7 +307,11 @@ def run_worker(args: argparse.Namespace) -> int:
     handler: RequestHandler | None = None
 
     try:
-        _wait_for_analysis(idb_path, skip_initial_auto_analysis=args.skip_initial_auto_analysis)
+        if args.skip_initial_auto_analysis:
+            log.warning("skipping initial auto-analysis: %s (the IDB stays mostly unexplored)", idb_path)
+        else:
+            log.info("waiting for auto-analysis: %s", idb_path)
+            ida_auto.auto_wait()
 
         if signal_shutdown:
             return 0

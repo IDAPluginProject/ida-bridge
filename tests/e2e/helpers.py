@@ -67,7 +67,8 @@ def spawn_idalib(
     """Spawn an idalib runner subprocess. Returns (process, idb_path).
 
     Exactly one of *binary_path* (``--input``) or *idb_path* (``--idb``) must
-    be provided.  *arch* is passed as ``--arch`` when set.
+    be provided.  *arch* is passed as ``--arch`` when set, and
+    *skip_initial_auto_analysis* as ``--skip-initial-auto-analysis``.
     """
     if (binary_path is None) == (idb_path is None):
         raise ValueError("exactly one of binary_path or idb_path must be set")

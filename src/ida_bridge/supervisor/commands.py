@@ -429,8 +429,9 @@ def cmd_start_idalib(args: argparse.Namespace) -> int:
     if result.client_id is None:
         print(
             f"idalib runner started (pid={result.pid}) but did not connect to the bridge within {args.wait_s}s.\n"
-            "This is expected for large binaries (auto-analysis must complete first).\n"
-            "If the analysis queue never drains, restart with --skip-initial-auto-analysis (results may be incomplete).",
+            "This is expected for large binaries (initial auto-analysis takes time).\n"
+            "If you suspect the binary is malformed and analysis hangs, stop it "
+            f"(`ida-bridge supervisor stop {result.pid}`), then start again with --skip-initial-auto-analysis.",
             file=sys.stderr,
         )
         _output(

@@ -42,8 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--skip-initial-auto-analysis",
         action="store_true",
-        help="Skip initial auto-analysis before connecting. "
-        "Analysis may be incomplete. For poisoned/non-finishing IDBs.",
+        help="Skip initial auto-analysis before connecting (the IDB stays mostly unexplored).",
     )
 
     parser.add_argument("--sql", help="SQL query (runs before --file and --code, result in _result_)")
@@ -80,7 +79,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if result.client_id is None:
         print(
-            f"idalib started (pid={result.pid}) but did not connect within {args.wait_s}s\nlog: {result.log_path}",
+            f"idalib started (pid={result.pid}) but did not connect within {args.wait_s}s\nlog: {result.log_path}\n"
+            "If you suspect the binary is malformed and analysis hangs, "
+            "run again with --skip-initial-auto-analysis.",
             file=sys.stderr,
         )
         terminate_pid(result.pid)
