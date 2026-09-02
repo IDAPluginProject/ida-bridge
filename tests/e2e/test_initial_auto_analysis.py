@@ -28,7 +28,7 @@ _result_ = {
 
 async def _probe(bridge: BridgeInfo, client_id: str) -> dict:
     async with open_agent_client(client_id="e2e-auto-analysis", url=bridge.url) as agent:
-        resp = await agent.exec(client_id, _PROBE, session_id="e2e-auto-analysis")
+        resp = await agent.exec(client_id, _PROBE)
     assert resp.ok, f"{resp.code} {resp.message}"
     assert isinstance(resp.result, dict)
     return resp.result
