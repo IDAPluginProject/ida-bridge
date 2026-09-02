@@ -31,7 +31,7 @@ Multiple IDA instances can connect to the bridge, but you target a specific inst
 - UI IDA connects as soon as the IDB is open but continues auto-analysis. For new IDBs, if results look incomplete, run `import ida_auto; ida_auto.auto_wait()` in exec.
 - idalib waits for auto-analysis to finish before connecting -- it is ready to query on arrival.
 - CLI waits up to 300s for the first client connection. Override with `--wait-s` for large binaries. If the wait expires (`status: waiting`, no `client_id`), analysis is still running -- find the instance with `ida-bridge list` once it connects instead of restarting.
-- If auto-analysis never finishes (broken IDB, a plugin that keeps enqueueing work), pass `--auto-wait-s 0` to connect immediately or `--auto-wait-s N` to wait at most N seconds. Queries then see whatever analysis is already stored and may be incomplete.
+- If auto-analysis never finishes (broken IDB, a plugin that keeps enqueueing work), pass `--skip-initial-auto-analysis` to connect without driving initial auto-analysis to completion. Queries then see whatever analysis is already stored and may be incomplete. The flag does not bound the wait in seconds.
 
 ### Lifecycle
 - Stop: `ida-bridge supervisor stop <client_id>` (no session-id needed; does not auto-save).

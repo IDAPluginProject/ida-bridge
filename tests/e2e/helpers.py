@@ -62,6 +62,7 @@ def spawn_idalib(
     binary_path: Path | None = None,
     idb_path: Path | None = None,
     arch: str | None = None,
+    skip_initial_auto_analysis: bool = False,
 ) -> tuple[subprocess.Popen[bytes], Path]:
     """Spawn an idalib runner subprocess. Returns (process, idb_path).
 
@@ -97,6 +98,8 @@ def spawn_idalib(
             "--idb",
             str(idb_path),
         ]
+    if skip_initial_auto_analysis:
+        cmd.append("--skip-initial-auto-analysis")
 
     process = subprocess.Popen(
         cmd,

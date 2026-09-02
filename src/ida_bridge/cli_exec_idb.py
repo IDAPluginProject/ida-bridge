@@ -40,12 +40,10 @@ def main(argv: list[str] | None = None) -> int:
         "--wait-s", default=300.0, type=float, help="Max seconds to wait for analysis + bridge connect (default: 300s)"
     )
     parser.add_argument(
-        "--auto-wait-s",
-        default=None,
-        type=float,
-        help="Seconds the runner waits for auto-analysis before connecting. "
-        "Default: wait until the queue drains. 0 skips the wait "
-        "(analysis may be incomplete).",
+        "--skip-initial-auto-analysis",
+        action="store_true",
+        help="Skip initial auto-analysis before connecting. "
+        "Analysis may be incomplete. For poisoned/non-finishing IDBs.",
     )
 
     parser.add_argument("--sql", help="SQL query (runs before --file and --code, result in _result_)")
@@ -74,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
             dyld_module=args.dyld_module,
             python=args.python,
             wait_s=args.wait_s,
-            auto_wait_s=args.auto_wait_s,
+            skip_initial_auto_analysis=args.skip_initial_auto_analysis,
         )
     except StartError as exc:
         print(str(exc), file=sys.stderr)

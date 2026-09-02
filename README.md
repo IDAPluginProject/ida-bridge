@@ -281,8 +281,8 @@ Most of the work happens iteratively via `exec` against running IDA instance -- 
 `exec-idb` is available for one-off queries, quick probes, or create-and-save flows.
 It is fire-and-forget: start IDA, run code or SQL, exit (`--save` if needed).
 
-Headless launches wait until IDA's auto-analysis queue is empty before connecting.
-`--auto-wait-s N` bounds that wait; `--auto-wait-s 0` skips it and connects with whatever analysis is already stored (which may be incomplete). Use this when a database's analysis queue never drains. `--wait-s` is separate: it is the supervisor's timeout for seeing the client on the bridge.
+Headless launches wait until IDA's auto-analysis queue is empty before connecting (`ida_auto.auto_wait()`).
+`--skip-initial-auto-analysis` skips that wait and connects with whatever analysis is already stored (which may be incomplete). Use this when a database's analysis queue never drains. It does not drive analysis for N seconds. `--wait-s` is separate: it is the supervisor's timeout for seeing the client on the bridge.
 
 ## Runtime and sessions
 

@@ -80,12 +80,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Max seconds to wait for analysis + bridge connect (default: 300s)",
     )
     p_idalib.add_argument(
-        "--auto-wait-s",
-        default=None,
-        type=float,
-        help="Seconds the runner waits for auto-analysis before connecting. "
-        "Default: wait until the queue drains. 0 skips the wait "
-        "(analysis may be incomplete).",
+        "--skip-initial-auto-analysis",
+        action="store_true",
+        help="Skip initial auto-analysis before connecting. "
+        "Analysis may be incomplete. For poisoned/non-finishing IDBs.",
     )
     p_idalib.set_defaults(func=cmd_start_idalib)
 

@@ -77,7 +77,7 @@ Ownership and lifecycle are separate:
 
 - UI IDA may be started by the supervisor or by a human. The plugin behavior is the same either way.
 - On Windows the venv launcher re-execs, so the process that connects is not the one the supervisor spawned; clients are matched by their self-reported pid.
-- idalib connects to the bridge after auto-analysis completes (`ida_auto.auto_wait()`). `--auto-wait-s` can bound or skip that wait; a connected instance may then still have analysis in flight.
+- idalib connects to the bridge after `ida_auto.auto_wait()` completes initial auto-analysis. `--skip-initial-auto-analysis` skips that wait so a poisoned IDB can still connect; analysis may be incomplete. The flag does not bound or step analysis, and does not change post-connect behavior.
 - Both UI IDA and idalib reconnect to the bridge after bridge restarts.
 
 ## Security model
