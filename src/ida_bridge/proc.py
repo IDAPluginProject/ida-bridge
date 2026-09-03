@@ -219,10 +219,60 @@ def listening_pid(port: int) -> int | None:
     """PID of the process listening on TCP *port*, or None."""
     if _IS_WINDOWS:
         return _listening_pid_windows(port)
-    return _listening_pid_posix(port)
+    if sys.platform == "linux":
+        return _listening_pid_via_proc(port)
+    return _listening_pid_via_lsof(port)
 
 
-def _listening_pid_posix(port: int) -> int | None:
+_TCP_LISTEN = "0A"  # st field in /proc/net/tcp
+
+
+def _listening_inodes(port: int) -> set[str]:
+    inodes: set[str] = set()
+    for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(path) as fh:
+                lines = fh.read().splitlines()[1:]  # tcp6 is absent without IPv6
+        except OSError:
+            continue
+        for line in lines:
+            fields = line.split()
+            if len(fields) < 10 or fields[3] != _TCP_LISTEN:
+                continue
+            if int(fields[1].rsplit(":", 1)[1], 16) == port:
+                inodes.add(fields[9])
+    return inodes
+
+
+def _listening_pid_via_proc(port: int) -> int | None:
+    """Listener PID from ``/proc`` alone.
+
+    ``lsof`` is absent from minimal images, including the one CI runs in, so
+    Linux reads the socket inode from ``/proc/net/tcp`` and ``tcp6``, then finds
+    the process holding it. Only processes this user can read are visible, which
+    is enough: the server we look for is our own.
+    """
+    targets = {f"socket:[{inode}]" for inode in _listening_inodes(port)}
+    if not targets:
+        return None
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        fd_dir = f"/proc/{entry}/fd"
+        try:
+            fds = os.listdir(fd_dir)
+        except OSError:
+            continue
+        for fd in fds:
+            try:
+                if os.readlink(f"{fd_dir}/{fd}") in targets:
+                    return int(entry)
+            except OSError:
+                continue
+    return None
+
+
+def _listening_pid_via_lsof(port: int) -> int | None:
     try:
         result = subprocess.run(
             ["lsof", "-ti", f":{port}", "-sTCP:LISTEN"],

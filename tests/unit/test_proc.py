@@ -133,6 +133,25 @@ class TestListeningPid:
         finally:
             srv.close()
 
+    @pytest.mark.skipif(not socket.has_ipv6, reason="no IPv6 support")
+    def test_finds_an_ipv6_listener(self) -> None:
+        """A v6-only listener is in a separate table on Linux (/proc/net/tcp6)."""
+        srv = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        srv.bind(("::1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+        try:
+            assert listening_pid(port) == os.getpid()
+        finally:
+            srv.close()
+
+    def test_returns_none_when_nothing_listens(self) -> None:
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.bind(("127.0.0.1", 0))
+        port = srv.getsockname()[1]
+        srv.close()
+        assert listening_pid(port) is None
+
 
 class TestIsPidInTree:
     def test_self_is_in_tree(self) -> None:

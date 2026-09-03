@@ -1,5 +1,6 @@
-"""Locate IDA installs: macOS .app bundles or Windows install directories."""
+"""Locate IDA installs: macOS .app bundles, Windows or Linux install directories."""
 
+import json
 import os
 from pathlib import Path
 import plistlib
@@ -105,6 +106,94 @@ def _ida_exe_in(directory: Path) -> Path | None:
     return None
 
 
+def ida_user_dirs() -> list[Path]:
+    """IDA's user-settings directories, in the order IDA scans them.
+
+    ``IDAUSR`` overrides the default and may list several, separated by the
+    platform's path separator; IDA scans every one.
+    """
+    idausr = os.environ.get("IDAUSR")
+    if idausr:
+        dirs = [Path(part.strip()).expanduser() for part in idausr.split(os.pathsep) if part.strip()]
+        if dirs:
+            return dirs
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+        return [Path(base) / "Hex-Rays" / "IDA Pro"]
+    return [Path.home() / ".idapro"]
+
+
+def _install_dir_from_config() -> Path | None:
+    """Install directory recorded in ``ida-config.json`` by hcli or py-activate-idalib."""
+    for user_dir in ida_user_dirs():
+        try:
+            data = json.loads((user_dir / "ida-config.json").read_text())
+        except (OSError, ValueError):
+            continue
+        path = (data.get("Paths") or {}).get("ida-install-dir")
+        if path:
+            return Path(path)
+    return None
+
+
+_IDA_LINUX_BIN = "ida"  # the GUI launcher; idat is the text-mode one
+
+
+def _ida_bin_in(directory: Path) -> Path | None:
+    binary = directory / _IDA_LINUX_BIN
+    return binary if binary.is_file() and os.access(binary, os.X_OK) else None
+
+
+def _linux_search_roots() -> list[Path]:
+    return [
+        Path.home() / ".local" / "share" / "applications",
+        Path("/opt"),
+        Path("/usr/local"),
+        Path.home(),
+    ]
+
+
+def find_ida_linux(*, search_roots: list[Path] | None = None) -> Path:
+    """Find the IDA GUI launcher on Linux.
+
+    ``IDADIR`` wins, then the install directory recorded in ``ida-config.json``.
+    Only then are conventional roots scanned: Linux has no install-path
+    convention -- the installer asks -- so scanning is a last resort.
+    """
+    idadir = os.environ.get("IDADIR")
+    if idadir:
+        binary = _ida_bin_in(Path(idadir).expanduser())
+        if binary is not None:
+            return binary
+
+    recorded = _install_dir_from_config()
+    if recorded is not None:
+        binary = _ida_bin_in(recorded)
+        if binary is not None:
+            return binary
+
+    roots = search_roots if search_roots is not None else _linux_search_roots()
+    candidates: list[tuple[tuple[int, ...], Path]] = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for entry in root.iterdir():
+            if not entry.is_dir() or not _looks_like_ida_dir(entry.name):
+                continue
+            binary = _ida_bin_in(entry)
+            if binary is None:
+                continue
+            candidates.append((_parse_dir_version(entry.name) or (), binary))
+
+    if not candidates:
+        raise SystemExit(
+            "No IDA installation found. Set IDADIR, activate idalib so "
+            "ida-config.json records the install directory, or pass --ida."
+        )
+    candidates.sort(key=lambda pair: pair[0])
+    return candidates[-1][1]
+
+
 def _windows_search_roots() -> list[Path]:
     roots: list[Path] = []
     for var in ("ProgramFiles", "ProgramFiles(x86)"):
@@ -166,4 +255,6 @@ def find_ida() -> Path:
         return find_ida_windows()
     if sys.platform == "darwin":
         return find_ida_app_bundle_macos()
-    raise SystemExit("IDA auto-detect supports macOS and Windows only. Pass --ida explicitly.")
+    if sys.platform == "linux":
+        return find_ida_linux()
+    raise SystemExit("IDA auto-detect supports macOS, Windows, and Linux only. Pass --ida explicitly.")

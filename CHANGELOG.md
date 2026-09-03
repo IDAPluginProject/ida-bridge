@@ -2,8 +2,18 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-03
+
 ### Added
+- Linux support. See README "Manual setup".
 - `--skip-initial-auto-analysis` on `start-idalib` and `exec-idb`: skip the runner's initial `ida_auto.auto_wait()` so we can deal with a malformed input that hangs auto-analysis.
+  Contributed by @T3rm1at0r in https://github.com/cellebrite-labs/ida-bridge/pull/3.
+
+### Changed
+- `supervisor start-ui` injects `IDAPYTHON_VENV_EXECUTABLE` into IDA's environment. Windows and Linux; macOS unchanged.
+
+### Fixed
+- `supervisor start-ui --ida` rejects a path that cannot be executed, instead of failing inside `Popen`.
 
 ## [0.5.0] - 2026-09-01
 

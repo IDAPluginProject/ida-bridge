@@ -10,11 +10,14 @@ Agent skill and references: `skills/ida-bridge/`.
 ## Prerequisites
 
 - IDA Pro >= 9.0
-- macOS or Windows
+- macOS, Windows, or Linux
 - [ida-docs](https://github.com/cellebrite-labs/ida-docs) agent skill (for agent-authored IDAPython)
 - [ida-setup](https://github.com/cellebrite-labs/ida-setup) (macOS only; automates the manual setup below)
 
-## Installation
+## Installation (macOS)
+
+On macOS `ida-setup` automates IDA Python env setup and plugin install.
+On Windows and Linux, follow [Manual setup](#manual-setup).
 
 ```bash
 # clone repo
@@ -35,8 +38,8 @@ pi install https://github.com/cellebrite-labs/ida-docs
 ## Manual setup
 
 On macOS, `ida-setup` is the easy mode: it sets up a venv, installs packages and plugins.
-On Windows, or if you don't use `ida-setup`, follow the instructions below.
-For Windows use `PowerShell`.
+On Windows and Linux, or if you don't use `ida-setup`, follow the instructions below.
+macOS and Linux commands are identical unless noted; Windows commands are PowerShell.
 
 The steps below assume a clone of this repo as your working directory, if you don't have one yet:
 
@@ -48,23 +51,28 @@ cd ida-bridge
 Four pieces need to end up in place:
 
 1. host CLI, so the agent can run `ida-bridge` commands
-2. two agent skills: one to operate ida-bridge, one to verify current IDA APIs
+2. two agent skills: one to operate ida-bridge, one for writing correct IDAPython code
 3. IDA UI plugin, so IDA UI is reachable
-4. IDA headless, so the headless runner can import both `idapro` and `ida_bridge`
+4. IDA headless, so the headless runner can drive IDA
 
 Locations of interest:
-- IDA's per-user directory: `~/.idapro/` on macOS, `%APPDATA%\Hex-Rays\IDA Pro\` on Windows
-- the IDA venv, shared by IDA UI and the headless runner: `~/.idapro/venv` on macOS, `$env:USERPROFILE\.idapro\venv` on Windows
+- IDA's per-user directory: `~/.idapro/` on macOS and Linux, `%APPDATA%\Hex-Rays\IDA Pro\` on Windows
+- the IDA venv, shared by IDA UI and the headless runner: `~/.idapro/venv` on macOS and Linux,
+  `$env:USERPROFILE\.idapro\venv` on Windows
 
 ### Python
 
-`ida-bridge` needs Python 3.12 or newer. On Windows, install it from [python.org](https://www.python.org/downloads/).
+`ida-bridge` needs Python 3.12 or newer.
+On Windows, install it from [python.org](https://www.python.org/downloads/).
+On Debian and Ubuntu, `python3 -m venv` needs the `python3-venv` package installed.
 
-Validate:
-- macOS: `python3 -c "import sys, sysconfig; print(sys.version, sysconfig.get_platform())"`
-- Windows: `python -c "import sys, sysconfig; print(sys.version, sysconfig.get_platform())"`
+If you manage several Python versions, the Python you create the venv with (next step) has to be the same as the Python IDA uses.
+Use `idapyswitch` to change the Python IDA uses if needed.
+If they are not the same, IDA will fail to use the venv properly.
 
-If you manage several versions (pyenv, Homebrew), use whichever binary reports 3.12+.
+Validate the version of interpreter you will build the venv from:
+- macOS and Linux: `python3 -c "import sys; print(sys.version)"`
+- Windows: `python -c "import sys; print(sys.version)"`
 
 Windows trap: `%LOCALAPPDATA%\Microsoft\WindowsApps` holds `python.exe` and `python3.exe` aliases.
 Both are Microsoft Store stubs: they print "Python was not found" or open the Store instead of
@@ -72,42 +80,61 @@ running Python.
 
 ### Create the IDA venv
 
-macOS: `python3 -m venv ~/.idapro/venv`
+macOS and Linux: `python3 -m venv ~/.idapro/venv`
 Windows: `python -m venv "$env:USERPROFILE\.idapro\venv"`
 
 Install ida-bridge and idalib into it; both IDA UI and the headless runner will use this venv:
 
-macOS: `~/.idapro/venv/bin/python3 -m pip install -e . idapro`
+macOS and Linux: `~/.idapro/venv/bin/python3 -m pip install -e . idapro`
 Windows: `& "$env:USERPROFILE\.idapro\venv\Scripts\python.exe" -m pip install -e . idapro`
 
 Validate:
-- macOS: `~/.idapro/venv/bin/python3 -c "import ida_bridge, idapro"`
+- macOS and Linux: `~/.idapro/venv/bin/python3 -c "import ida_bridge, idapro"`
 - Windows: `& "$env:USERPROFILE\.idapro\venv\Scripts\python.exe" -c "import ida_bridge, idapro"`
 
-### Make IDA UI use the venv
+### Point IDA UI at the venv
 
-The headless runner uses the venv directly. IDA UI needs to be pointed at it, through the
-`IDAPYTHON_VENV_EXECUTABLE` environment variable. IDA reads it at startup, so only instances
-started after it is set pick it up.
+IDA has builtin support for venvs. On startup it reads the `IDAPYTHON_VENV_EXECUTABLE` variable and if present uses the venv path supplied.
+For IDA instances you start from Finder, Explorer, or a desktop launcher this var has to be present in the desktop environment.
+Exporting it in a shell does not reach an IDA started from the desktop.
 
-macOS: the value has to live in launchd's per-user environment -- GUI apps do not read shell
-startup files. `ida-setup` installs a user LaunchAgent that sets it; without ida-setup, set it
-yourself:
+macOS:
+GUI apps read launchd's per-user environment, not shell startup files.
 
+You can set the var like this:
 ```bash
 launchctl setenv IDAPYTHON_VENV_EXECUTABLE ~/.idapro/venv/bin/python3
 ```
 
-That lasts until logout; a user LaunchAgent running the same command at login makes it persistent.
-Read it back with `launchctl asuser $(id -u) launchctl getenv IDAPYTHON_VENV_EXECUTABLE`.
+That lasts until logout. To make it persistent you need to setup a user LaunchAgent running the same command at login.
+Check `ida-setup` code to see how the plist looks and how to make it auto-load.
+
+Read the var with `launchctl asuser $(id -u) launchctl getenv IDAPYTHON_VENV_EXECUTABLE`.
 
 Windows:
 `[Environment]::SetEnvironmentVariable("IDAPYTHON_VENV_EXECUTABLE", "$env:USERPROFILE\.idapro\venv\Scripts\python.exe", "User")`
 
 Read it back with `[Environment]::GetEnvironmentVariable("IDAPYTHON_VENV_EXECUTABLE", "User")`.
 
-Validate: start IDA and run `import sys; print(sys.prefix)` in its Python console.
-It should print the venv path rather than the base interpreter.
+Linux:
+Assuming you run a systemd session (GNOME, KDE).
+
+Add a session env var:
+```bash
+mkdir -p ~/.config/environment.d
+printf 'IDAPYTHON_VENV_EXECUTABLE=${HOME}/.idapro/venv/bin/python3\n' > ~/.config/environment.d/ida-bridge.conf
+```
+
+Then log out and back in.
+Desktop apps inherit the session's environment, and the session reads these files only when it starts.
+
+If you have an alias to launch IDA from shell, export the var in the shell.
+
+Read the var with: `systemctl --user show-environment | grep IDAPYTHON_VENV_EXECUTABLE`
+
+Validate: start IDA yourself and run `import sys; print(sys.version, sys.prefix)` in its Python
+console. It should print the venv path rather than the base interpreter, and a version matching the
+one the venv was built from.
 
 ### Host CLI
 
@@ -126,7 +153,9 @@ Clone ida-docs next to this repo, keeping this repo as the working directory:
 `git clone https://github.com/cellebrite-labs/ida-docs.git ../ida-docs`
 
 Then link both skill directories into the agent's skills directory.
-The commands below use pi's (`~/.pi/agent/skills/`); for codex use `~/.codex/skills/`, for Claude Code `~/.claude/skills/`:
+The commands below use pi's (`~/.pi/agent/skills/`); for codex use `~/.codex/skills/`, for Claude Code `~/.claude/skills/`.
+
+macOS and Linux:
 
 ```bash
 mkdir -p ~/.pi/agent/skills
@@ -152,7 +181,7 @@ Validate: run the agent and tell it to start ida-bridge server -- it should run 
 
 Put the plugin file where IDA looks for it, creating the `plugins` directory if it isn't there:
 
-macOS:
+macOS and Linux:
 ```bash
 mkdir -p ~/.idapro/plugins
 ln -s "$PWD/src/ida_bridge/ida_bridge_plugin.py" ~/.idapro/plugins/
@@ -187,8 +216,8 @@ Validated by the final check below.
 ### IDA headless (idalib)
 
 The headless runner drives IDA through `idalib`. It uses the venv from above --
-`~/.idapro/venv/bin/python3` on macOS, `~/.idapro/venv/Scripts/python.exe` on Windows -- which
-already has `ida_bridge` and `idapro` in it.
+`~/.idapro/venv/bin/python3` on macOS and Linux, `~/.idapro/venv/Scripts/python.exe` on Windows --
+which already has `ida_bridge` and `idapro` in it.
 
 Validated by the final check below.
 
@@ -219,6 +248,17 @@ ida-bridge list                                                # both appear, wi
 ida-bridge supervisor stop <client_id>                         # once per client
 ```
 
+Linux:
+```bash
+ida-bridge server start                                        # the bridge must run first
+ida-bridge exec-idb --input /bin/ls --out-idb /tmp/ls.i64 --save   # binary -> IDB (ELF, no --arch)
+cp /tmp/ls.i64 /tmp/ls-ui.i64                                  # second copy, IDA locks an open IDB
+ida-bridge supervisor start-idalib --idb /tmp/ls.i64           # headless instance
+ida-bridge supervisor start-ui --idb /tmp/ls-ui.i64            # UI instance, needs a graphical session
+ida-bridge list                                                # both appear, with their client_ids
+ida-bridge supervisor stop <client_id>                         # once per client
+```
+
 `start-idalib` and `start-ui` print the client id, IDB path, PID and log path. On failure the log
 path is printed, check it for troubleshooting.
 
@@ -245,6 +285,11 @@ Leave the bridge server running afterwards -- that is its normal state.
   junction (`New-Item -ItemType Junction`) needs neither, which is why the skill directories are
   linked that way; junctions cannot link a single file, so the plugin is symlinked from an
   elevated shell or copied.
+- `python3 -m venv` fails with `ensurepip is not available`: Debian and Ubuntu ship `ensurepip`
+  separately. Install `python3-venv` and create the venv again.
+- `start-ui` refuses with `no display: start-ui needs DISPLAY or WAYLAND_DISPLAY`: it is running
+  without a graphical session, over SSH for example. IDA would start with no window and never
+  connect, so it stops before launching.
 
 ## How it works
 
@@ -337,10 +382,10 @@ Headless only (idalib). UI IDA handles dyld module selection through its own GUI
 | `IDA_BRIDGE_HOST` | `127.0.0.1` | bridge server bind host and client default host |
 | `IDA_BRIDGE_PORT` | `8765` | bridge server bind port and client default port |
 | `IDA_BRIDGE_WS_MAX_SIZE` | `67108864` | max incoming websocket message size in bytes |
-| `IDA_BRIDGE_LOG_FILE` | `~/Library/Logs/ida-bridge/server.log` (macOS) / `%LOCALAPPDATA%\ida-bridge\logs\server.log` (Windows) | structured server log (rotated); raw stdout/stderr go to the sibling `server.out` |
+| `IDA_BRIDGE_LOG_FILE` | `~/Library/Logs/ida-bridge/server.log` (macOS) / `%LOCALAPPDATA%\ida-bridge\logs\server.log` (Windows) / `$XDG_STATE_HOME/ida-bridge/logs/server.log`, default `~/.local/state/...` (Linux) | structured server log (rotated); raw stdout/stderr go to the sibling `server.out` |
 | `IDA_BRIDGE_LOG_MAX_BYTES` | `10485760` | log rotation threshold in bytes |
 | `IDA_BRIDGE_LOG_BACKUP_COUNT` | `3` | number of rotated log files to keep |
-| `IDA_BRIDGE_LOG_DIR` | `~/Library/Logs/ida-bridge` (macOS) / `%LOCALAPPDATA%\ida-bridge\logs` (Windows) | base directory for all bridge logs (server log + per-instance launch logs `idaui-<pid>.log` / `idalib-<pid>.log`) |
+| `IDA_BRIDGE_LOG_DIR` | `~/Library/Logs/ida-bridge` (macOS) / `%LOCALAPPDATA%\ida-bridge\logs` (Windows) / `$XDG_STATE_HOME/ida-bridge/logs`, default `~/.local/state/...` (Linux) | base directory for all bridge logs (server log + per-instance launch logs `idaui-<pid>.log` / `idalib-<pid>.log`) |
 | `IDA_BRIDGE_LOG_KEEP` | `30` | dead per-instance logs retained per kind (live instances always kept) |
 | `IDA_BRIDGE_LOG_PRUNE_INTERVAL_S` | `3600` | how often the server sweeps dead per-instance logs |
 | `IDA_BRIDGE_STATEFUL_TTL_S` | `3600` | seconds before idle stateful ownership expires |

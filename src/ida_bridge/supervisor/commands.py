@@ -76,7 +76,8 @@ def _clean_env() -> dict[str, str]:
 
     Removes venv/python variables that could cause IDA's Python to resolve a
     different interpreter than intended, and scrubs the venv script directory
-    from PATH.
+    from PATH. Points IDA at the same venv the headless runner uses, unless the
+    caller already chose one.
     """
     result = dict(os.environ)
 
@@ -92,6 +93,9 @@ def _clean_env() -> dict[str, str]:
             parts = [p for p in path.split(os.pathsep) if p and Path(p).resolve() not in venv_bins]
             result["PATH"] = os.pathsep.join(parts)
 
+    if not result.get("IDAPYTHON_VENV_EXECUTABLE") and IDALIB_VENV_PYTHON.is_file():
+        result["IDAPYTHON_VENV_EXECUTABLE"] = str(IDALIB_VENV_PYTHON)
+
     return result
 
 
@@ -101,8 +105,13 @@ def _same_path(left: str, right: str) -> bool:
 
 
 def cmd_start_ui(args: argparse.Namespace) -> int:
-    if sys.platform not in ("darwin", "win32"):
-        print("start-ui currently supports macOS and Windows only.", file=sys.stderr)
+    if sys.platform not in ("darwin", "win32", "linux"):
+        print("start-ui currently supports macOS, Windows, and Linux only.", file=sys.stderr)
+        return 2
+
+    if sys.platform == "linux" and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        # IDA would start, fail to open a window, and surface as a connect timeout.
+        print("no display: start-ui needs DISPLAY or WAYLAND_DISPLAY set.", file=sys.stderr)
         return 2
 
     # Validate and resolve paths.
@@ -130,8 +139,12 @@ def cmd_start_ui(args: argparse.Namespace) -> int:
     if args.ida:
         app = Path(args.ida).expanduser().resolve()
         if sys.platform == "win32":
-            if not app.is_file():
+            # X_OK is meaningless on Windows -- it is True for any existing file.
+            if not app.is_file() or app.suffix.lower() != ".exe":
                 raise SystemExit(f"--ida must point to the IDA executable (ida.exe): {app}")
+        elif sys.platform == "linux":
+            if not app.is_file() or not os.access(app, os.X_OK):
+                raise SystemExit(f"--ida must point to the IDA executable (ida): {app}")
         elif not app.exists() or app.suffix != ".app":
             raise SystemExit(f"--ida must point to a .app bundle: {app}")
     else:
@@ -159,6 +172,16 @@ def cmd_start_ui(args: argparse.Namespace) -> int:
             [str(app), *args_list],
             env=_clean_env(),
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+        )
+        launched_pid = child.pid
+        print("running:", " ".join([str(app), *args_list]), file=sys.stderr, flush=True)
+    elif sys.platform == "linux":
+        # Direct launch, so Popen gives us a child PID to match on. New session so
+        # IDA outlives the CLI.
+        child = subprocess.Popen(
+            [str(app), *args_list],
+            env=_clean_env(),
+            **proc.detached_popen_kwargs(),
         )
         launched_pid = child.pid
         print("running:", " ".join([str(app), *args_list]), file=sys.stderr, flush=True)

@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
+from ida_bridge.supervisor import commands
 from ida_bridge.supervisor.commands import StartError, default_idalib_python, start_idalib
 
 
@@ -59,3 +60,30 @@ class TestStartIdalibDyldValidation:
                     out_idb=str(out_idb),
                     dyld_module="/usr/lib/system/libcompiler_rt.dylib",
                 )
+
+
+class TestCleanEnv:
+    """UI IDA must land on the same venv the headless runner uses."""
+
+    def test_points_ida_at_the_venv(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        venv_python = tmp_path / "python3"
+        venv_python.write_text("")
+        monkeypatch.setattr(commands, "IDALIB_VENV_PYTHON", venv_python)
+        monkeypatch.delenv("IDAPYTHON_VENV_EXECUTABLE", raising=False)
+
+        assert commands._clean_env()["IDAPYTHON_VENV_EXECUTABLE"] == str(venv_python)
+
+    def test_keeps_an_explicit_choice(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        venv_python = tmp_path / "python3"
+        venv_python.write_text("")
+        monkeypatch.setattr(commands, "IDALIB_VENV_PYTHON", venv_python)
+        monkeypatch.setenv("IDAPYTHON_VENV_EXECUTABLE", "/somewhere/else/python3")
+
+        assert commands._clean_env()["IDAPYTHON_VENV_EXECUTABLE"] == "/somewhere/else/python3"
+
+    def test_stays_silent_without_a_venv(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No venv means IDA keeps whatever interpreter it would have used."""
+        monkeypatch.setattr(commands, "IDALIB_VENV_PYTHON", tmp_path / "missing" / "python3")
+        monkeypatch.delenv("IDAPYTHON_VENV_EXECUTABLE", raising=False)
+
+        assert "IDAPYTHON_VENV_EXECUTABLE" not in commands._clean_env()

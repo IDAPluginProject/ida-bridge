@@ -2,7 +2,7 @@
 
 ## Test scope
 
-Unit and integration are OS-agnostic; e2e runs on macOS and Windows, with fixtures generated on macOS.
+Unit and integration are OS-agnostic; e2e runs on macOS, Windows, and Linux, with fixtures generated on macOS.
 
 ### Unit (`tests/unit/`)
 

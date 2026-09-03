@@ -20,13 +20,32 @@ def _touch(path: Path, mtime: float) -> None:
 
 
 class TestDefaultLogDir:
-    def test_respects_platform(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("IDA_BRIDGE_LOG_DIR", raising=False)
-        if sys.platform == "win32":
-            monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\test\AppData\Local")
-            assert _default_log_dir() == Path(r"C:\Users\test\AppData\Local") / "ida-bridge" / "logs"
-        else:
-            assert _default_log_dir() == Path.home() / "Library" / "Logs" / "ida-bridge"
+    """Each platform gets its own convention; a new one must not inherit another's."""
+
+    def test_windows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\test\AppData\Local")
+        assert _default_log_dir() == Path(r"C:\Users\test\AppData\Local") / "ida-bridge" / "logs"
+
+    def test_macos(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "platform", "darwin")
+        assert _default_log_dir() == Path.home() / "Library" / "Logs" / "ida-bridge"
+
+    def test_linux_honours_xdg_state_home(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setenv("XDG_STATE_HOME", "/xdg/state")
+        assert _default_log_dir() == Path("/xdg/state") / "ida-bridge" / "logs"
+
+    def test_linux_without_xdg_state_home(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+        assert _default_log_dir() == Path.home() / ".local" / "state" / "ida-bridge" / "logs"
+
+    def test_unknown_platform_falls_back_to_xdg(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """XDG is a cross-Unix convention, so it is the deliberate default, not a leftover."""
+        monkeypatch.setattr(sys, "platform", "freebsd14")
+        monkeypatch.setenv("XDG_STATE_HOME", "/xdg/state")
+        assert _default_log_dir() == Path("/xdg/state") / "ida-bridge" / "logs"
 
 
 class TestPruneInstanceLogs:

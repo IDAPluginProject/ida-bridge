@@ -25,7 +25,10 @@ def _default_log_dir() -> Path:
     if sys.platform == "win32":
         base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
         return Path(base) / "ida-bridge" / "logs"
-    return Path.home() / "Library" / "Logs" / "ida-bridge"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Logs" / "ida-bridge"
+    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(base) / "ida-bridge" / "logs"
 
 
 def log_dir() -> Path:
