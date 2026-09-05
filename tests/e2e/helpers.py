@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 import time
 
 import pytest
@@ -102,13 +103,20 @@ def spawn_idalib(
     if skip_initial_auto_analysis:
         cmd.append("--skip-initial-auto-analysis")
 
+    # Runner output goes to a temp file, not a pipe. Nothing drains the runner while a
+    # test runs, so a pipe fills and blocks the write. That write happens on IDA's main
+    # thread, so the instance wedges and every later test sharing it fails.
+    # The file has no path of its own (unlinked on POSIX, delete-on-close on Windows),
+    # and terminate_idalib() closes it.
+    output_file = tempfile.TemporaryFile()
     process = subprocess.Popen(
         cmd,
-        stdout=subprocess.PIPE,
+        stdout=output_file,
         stderr=subprocess.STDOUT,
         env=env,
         **proc.detached_popen_kwargs(),
     )
+    process.output_file = output_file  # type: ignore[attr-defined]  # read by dump_process_output
     return process, out_idb
 
 
@@ -153,22 +161,28 @@ async def wait_for_idalib(
 
 
 def terminate_idalib(process: subprocess.Popen[bytes]) -> None:
-    """Best-effort terminate + kill an idalib process (including venv children)."""
-    if process.poll() is not None:
-        try:
-            process.wait(timeout=1)
-        except subprocess.TimeoutExpired:
-            pass
-        return
-    proc.terminate_pid(process.pid, timeout_s=10.0)
+    """Best-effort terminate + kill an idalib process (including venv children).
+
+    Closes the captured output, so dump_process_output() must run before this.
+    """
     try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
+        if process.poll() is not None:
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+            return
+        proc.terminate_pid(process.pid, timeout_s=10.0)
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            pass
+            process.kill()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+    finally:
+        process.output_file.close()  # type: ignore[attr-defined]  # set by spawn_idalib
 
 
 async def shutdown_and_save(bridge: BridgeInfo, client_id: str, proc: subprocess.Popen[bytes]) -> None:
@@ -276,16 +290,21 @@ async def _poll_for_idalib(
 
 
 def dump_process_output(proc: subprocess.Popen[bytes]) -> None:
-    """Best-effort dump of runner stdout for debugging test failures."""
-    if proc.stdout:
-        try:
-            out = proc.stdout.read()
-            if out:
-                print(f"--- idalib runner output (pid={proc.pid}) ---")
-                print(out.decode(errors="replace"))
-                print("--- end ---")
-        except Exception:
-            pass
+    """Best-effort dump of runner output for debugging test failures.
+
+    Reads the whole capture, including output written before the failure and after
+    a hang, which a pipe could not hold.
+    """
+    output_file = proc.output_file  # type: ignore[attr-defined]  # set by spawn_idalib
+    try:
+        output_file.seek(0)
+        out = output_file.read()
+    except Exception:
+        return
+    if out:
+        print(f"--- idalib runner output (pid={proc.pid}) ---")
+        print(out.decode(errors="replace"))
+        print("--- end ---")
 
 
 # ---------------------------------------------------------------------------

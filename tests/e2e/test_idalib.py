@@ -112,6 +112,22 @@ class TestExecStdout:
             assert resp.ok
             assert resp.stdout and "bridge_test_output" in resp.stdout
 
+    async def test_large_stdout_capture(self, shared_idalib: IdalibInstance) -> None:
+        """Output larger than any OS pipe buffer round-trips and leaves the instance usable."""
+        size = 256 * 1024
+        async with shared_idalib.agent_client() as agent:
+            resp = await agent.exec(
+                shared_idalib.client_id, f"print('z' * {size}, end='')", session_id=SESSION_ID, persist=True
+            )
+            assert resp.ok
+            assert resp.stdout == "z" * size
+
+            after = await agent.exec(
+                shared_idalib.client_id, "print('still_alive')", session_id=SESSION_ID, persist=True
+            )
+            assert after.ok
+            assert after.stdout and "still_alive" in after.stdout
+
 
 class TestExecError:
     async def test_exec_error(self, shared_idalib: IdalibInstance) -> None:
