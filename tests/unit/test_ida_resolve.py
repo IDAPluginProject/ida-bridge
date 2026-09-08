@@ -108,6 +108,7 @@ class TestFindIdaLinux:
         monkeypatch.delenv("IDADIR", raising=False)
         assert find_ida_linux(search_roots=[tmp_path]) == newest
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="no execute bit, so X_OK is true for any file")
     def test_ignores_non_executable(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _touch_exe(tmp_path / "IDA Professional 9.4" / "ida")  # not chmod +x
         monkeypatch.setenv("IDAUSR", str(tmp_path / "empty-usr"))
