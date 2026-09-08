@@ -53,6 +53,14 @@ If a test needs IDA to be meaningful, it belongs in e2e.
 E2E tests require a working IDA/idalib setup.
 Running the suite starts an ephemeral bridge server per run; no background `ida-bridge server` is needed.
 
+### Which code the runner runs
+
+Spawned runners use the idalib venv's interpreter, which has its own `ida_bridge` install.
+To support running tests from a different worktree we have to make the runner import `ida_bridge` from the checkout rather than from the venv install.
+The session puts the current checkout's `src/` on `PYTHONPATH` so they import the tree under test,
+and fails the run if they resolve elsewhere. UI IDA is outside this: the supervisor drops
+`PYTHONPATH` when launching it, so a UI instance always runs the venv's installed copy.
+
 ### Fixture model
 
 SQL e2e coverage is parametrized over a discovered fixture bank: every `*.i64`

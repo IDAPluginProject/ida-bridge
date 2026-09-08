@@ -22,7 +22,8 @@ from ida_bridge.supervisor.commands import default_idalib_python
 # ---------------------------------------------------------------------------
 
 IDALIB_VENV_PYTHON = default_idalib_python()
-IDALIB_RUNNER = Path(__file__).resolve().parent.parent.parent / "src" / "ida_bridge" / "idalib_runner.py"
+REPO_SRC = Path(__file__).resolve().parents[2] / "src"
+IDALIB_RUNNER = REPO_SRC / "ida_bridge" / "idalib_runner.py"
 
 
 # ---------------------------------------------------------------------------

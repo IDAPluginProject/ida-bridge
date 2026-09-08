@@ -16,8 +16,9 @@ Provides several fixture scopes:
   for write tests.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -29,6 +30,8 @@ import pytest_asyncio
 
 from ida_bridge.agent_client import open_agent_client
 from tests.e2e.helpers import (
+    IDALIB_VENV_PYTHON,
+    REPO_SRC,
     BridgeInfo,
     SqlRunner,
     shutdown_and_save,
@@ -39,6 +42,50 @@ from tests.e2e.helpers import (
 )
 from tests.fixtures.build import FAT_MACHO, SMALL_MACHO_ARM64, bin_path
 from tests.fixtures.idb_discovery import IdbFixture
+
+# ---------------------------------------------------------------------------
+# Runner code under test
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session", autouse=True)
+def idalib_runs_this_checkout() -> Iterator[None]:
+    """Point headless runners at this checkout, and prove that they land there.
+
+    The idalib venv has its own ``ida_bridge`` install, which is what a spawned runner
+    imports by default. When that is not this checkout -- typically because tests run from a
+    second worktree or clone -- an e2e run exercises the other tree and a green result says
+    nothing about the code under test. PYTHONPATH on the session's environment reaches both
+    directly spawned runners and the ones the CLI spawns.
+
+    UI IDA is not covered: ``supervisor._clean_env`` drops PYTHONPATH on purpose, so a UI
+    instance always runs the venv's installed copy.
+    """
+    with pytest.MonkeyPatch.context() as mp:
+        # An empty entry in PYTHONPATH means the cwd, so drop the inherited value when unset.
+        inherited = os.environ.get("PYTHONPATH", "")
+        entries = [str(REPO_SRC), inherited] if inherited else [str(REPO_SRC)]
+        mp.setenv("PYTHONPATH", os.pathsep.join(entries))
+
+        # -P keeps the cwd off sys.path, as it is for the runner's own script-mode launch.
+        probe = subprocess.run(
+            [str(IDALIB_VENV_PYTHON), "-P", "-c", "import ida_bridge; print(ida_bridge.__file__)"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if probe.returncode != 0:
+            pytest.fail(f"idalib venv cannot import ida_bridge:\n{probe.stderr.strip()}")
+
+        resolved = Path(probe.stdout.strip()).resolve()
+        if REPO_SRC not in resolved.parents:
+            pytest.fail(
+                f"idalib runner would import ida_bridge from {resolved}, not {REPO_SRC};\n"
+                "e2e results would describe a different checkout."
+            )
+
+        yield
+
 
 # ---------------------------------------------------------------------------
 # Bridge server fixture
