@@ -38,6 +38,64 @@ def abort_ws(ws: websocket.WebSocketApp) -> None:
         pass
 
 
+def _wire_safe_text(text: str, *, fallback: str) -> str:
+    sanitized = text.encode("ascii", "backslashreplace").decode("ascii")
+    return sanitized if sanitized.strip() else fallback
+
+
+def _exception_text(exc: BaseException) -> str:
+    try:
+        return f"{type(exc).__name__}: {exc}"
+    except Exception:
+        return type(exc).__name__
+
+
+def _contains_unserializable_text(value: object) -> bool:
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            return True
+        return False
+    if isinstance(value, dict):
+        return any(_contains_unserializable_text(k) or _contains_unserializable_text(v) for k, v in value.items())
+    if isinstance(value, (list, tuple)):
+        return any(_contains_unserializable_text(v) for v in value)
+    return False
+
+
+def _unserializable_field(msg: protocol.Message) -> str | None:
+    skip = {"v", "type", "id", "src", "dst", "ok", "code"}
+    for name in type(msg).model_fields:
+        if name in skip:
+            continue
+        value = getattr(msg, name, None)
+        if value is None:
+            continue
+        if _contains_unserializable_text(value):
+            return name
+    return None
+
+
+def _not_serializable_response(msg: protocol.Message, exc: BaseException) -> protocol.Message | None:
+    if not isinstance(msg, protocol.ResponseBase):
+        return None
+    if msg.code == protocol.ERR_RESPONSE_NOT_SERIALIZABLE:
+        return None
+
+    details = _wire_safe_text(_exception_text(exc), fallback="response not serializable")
+    field = _unserializable_field(msg)
+    message = f"cannot serialize field {field}: {details}" if field else details
+    return type(msg)(
+        id=msg.id,
+        src=msg.src,
+        dst=msg.dst,
+        ok=False,
+        code=protocol.ERR_RESPONSE_NOT_SERIALIZABLE,
+        message=message,
+    )
+
+
 def _queue_full_response(
     client_id: str,
     msg: protocol.ExecRequest | protocol.ResetRequest | protocol.QuitRequest,
@@ -148,7 +206,18 @@ class BridgeConn:
 
     def send(self, msg: protocol.Message) -> None:
         """Send a message on the current connection."""
-        data = protocol.dump_message_json(msg)
+        try:
+            data = protocol.dump_message_json(msg)
+        except Exception as exc:
+            log.error("response not serializable", exc_info=True)
+            try:
+                replacement = _not_serializable_response(msg, exc)
+                if replacement is None:
+                    return
+                data = protocol.dump_message_json(replacement)
+            except Exception:
+                log.error("error response not serializable", exc_info=True)
+                return
 
         with self._conn_lock:
             ws = self._ws

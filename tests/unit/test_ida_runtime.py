@@ -1,10 +1,12 @@
 """Tests for ida_bridge.ida_runtime (serialize_result, Tee, run_user_code)."""
 
 import io
+import logging
 import queue
 
 import pytest
 
+from ida_bridge import protocol
 from ida_bridge.ida_runtime import (
     QUEUE_SENTINEL,
     RequestHandler,
@@ -621,3 +623,70 @@ class TestRequestHandler:
         assert resp.src == "ida-1"
         assert resp.dst == "agent-1"
         assert resp.ok is True
+
+    def test_handle_still_raises_on_internal_error(self) -> None:
+        def boom(_code: str, _exec_env: dict) -> tuple[object, str, str, Exception | None]:
+            raise RuntimeError("boom")
+
+        handler = RequestHandler(client_id="ida-1", run_code=boom, send=lambda _: None)
+        req = ExecRequest(id=new_req_id(), src="agent-1", dst="ida-1", code="x = 1")
+        with pytest.raises(RuntimeError, match="boom"):
+            handler.handle(req)
+
+    def test_handle_request_internal_error_sends_and_continues(self, caplog: pytest.LogCaptureFixture) -> None:
+        def run_code(code: str, exec_env: dict) -> tuple[object, str, str, Exception | None]:
+            if code == "boom":
+                raise RuntimeError("boom")
+            return run_user_code(code=code, exec_env=exec_env)
+
+        sent: list[object] = []
+        handler = RequestHandler(client_id="ida-1", run_code=run_code, send=sent.append)
+        boom_req = ExecRequest(id=new_req_id(), src="agent-1", dst="ida-1", code="boom")
+        ok_req = ExecRequest(id=new_req_id(), src="agent-1", dst="ida-1", code="_result_ = 7")
+
+        with caplog.at_level(logging.ERROR, logger="ida_bridge.ida_runtime"):
+            handler.handle_request(boom_req)
+            handler.handle_request(ok_req)
+
+        assert len(sent) == 2
+        err = sent[0]
+        assert isinstance(err, ExecResponse)
+        assert err.ok is False
+        assert err.id == boom_req.id
+        assert err.src == "ida-1"
+        assert err.dst == "agent-1"
+        assert err.code == protocol.ERR_TARGET_INTERNAL_ERROR
+        assert err.message is not None
+        assert "RuntimeError" in err.message
+        assert "boom" in err.message
+        err.message.encode("utf-8")
+        if err.traceback is not None:
+            err.traceback.encode("utf-8")
+
+        ok = sent[1]
+        assert isinstance(ok, ExecResponse)
+        assert ok.ok is True
+        assert ok.result == 7
+
+        error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert len(error_records) == 1
+        assert error_records[0].exc_info is not None
+
+    def test_handle_request_non_ascii_exception_stays_alive(self) -> None:
+        def boom(_code: str, _exec_env: dict) -> tuple[object, str, str, Exception | None]:
+            raise RuntimeError("café /tmp/ünicode")
+
+        sent: list[object] = []
+        handler = RequestHandler(client_id="ida-1", run_code=boom, send=sent.append)
+        req = ExecRequest(id=new_req_id(), src="agent-1", dst="ida-1", code="x = 1")
+        handler.handle_request(req)
+
+        assert len(sent) == 1
+        err = sent[0]
+        assert isinstance(err, ExecResponse)
+        assert err.ok is False
+        assert err.code == protocol.ERR_TARGET_INTERNAL_ERROR
+        assert err.message is not None
+        err.message.encode("ascii")
+        if err.traceback is not None:
+            err.traceback.encode("ascii")

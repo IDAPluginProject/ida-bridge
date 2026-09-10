@@ -319,6 +319,8 @@ Codes:
 - `TARGET_PING_TIMEOUT`: target connection died due to keepalive timeout
 - `TIMEOUT`: bridge-side request timeout
 - `QUEUE_FULL`: IDA runtime rejected the request because its request queue is full
+- `RESPONSE_NOT_SERIALIZABLE`: IDA runtime could not JSON-serialize the response; the original payload is dropped and the target keeps serving
+- `TARGET_INTERNAL_ERROR`: unexpected exception in the IDA request handler; the target keeps serving
 - `SESSION_CONFLICT`: target exec environment is owned by another session
 - `TAKEOVER_PENDING`: ownership transfer in progress
 - `RELEASE_PENDING`: ownership release in progress
