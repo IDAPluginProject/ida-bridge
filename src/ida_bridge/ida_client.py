@@ -131,7 +131,7 @@ class IDAClient:
             if msg is None:
                 continue
 
-            handler.handle_request(msg)
+            handler.handle(msg)
 
             if handler.quit_requested:
                 log.info("shutdown requested")

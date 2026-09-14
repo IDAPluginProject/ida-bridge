@@ -624,16 +624,7 @@ class TestRequestHandler:
         assert resp.dst == "agent-1"
         assert resp.ok is True
 
-    def test_handle_still_raises_on_internal_error(self) -> None:
-        def boom(_code: str, _exec_env: dict) -> tuple[object, str, str, Exception | None]:
-            raise RuntimeError("boom")
-
-        handler = RequestHandler(client_id="ida-1", run_code=boom, send=lambda _: None)
-        req = ExecRequest(id=new_req_id(), src="agent-1", dst="ida-1", code="x = 1")
-        with pytest.raises(RuntimeError, match="boom"):
-            handler.handle(req)
-
-    def test_handle_request_internal_error_sends_and_continues(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_handle_internal_error_sends_and_continues(self, caplog: pytest.LogCaptureFixture) -> None:
         def run_code(code: str, exec_env: dict) -> tuple[object, str, str, Exception | None]:
             if code == "boom":
                 raise RuntimeError("boom")
@@ -645,8 +636,8 @@ class TestRequestHandler:
         ok_req = ExecRequest(id=new_req_id(), src="agent-1", dst="ida-1", code="_result_ = 7")
 
         with caplog.at_level(logging.ERROR, logger="ida_bridge.ida_runtime"):
-            handler.handle_request(boom_req)
-            handler.handle_request(ok_req)
+            handler.handle(boom_req)
+            handler.handle(ok_req)
 
         assert len(sent) == 2
         err = sent[0]
@@ -672,14 +663,14 @@ class TestRequestHandler:
         assert len(error_records) == 1
         assert error_records[0].exc_info is not None
 
-    def test_handle_request_non_ascii_exception_stays_alive(self) -> None:
+    def test_handle_non_ascii_exception_stays_alive(self) -> None:
         def boom(_code: str, _exec_env: dict) -> tuple[object, str, str, Exception | None]:
             raise RuntimeError("café /tmp/ünicode")
 
         sent: list[object] = []
         handler = RequestHandler(client_id="ida-1", run_code=boom, send=sent.append)
         req = ExecRequest(id=new_req_id(), src="agent-1", dst="ida-1", code="x = 1")
-        handler.handle_request(req)
+        handler.handle(req)
 
         assert len(sent) == 1
         err = sent[0]

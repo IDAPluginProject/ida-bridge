@@ -144,7 +144,7 @@ def test_exec_surrogate_stdout_does_not_raise() -> None:
         dst="ida-1",
         code="print(b'PRE_abc\\xff_POST'.decode('utf-8', 'surrogateescape'))",
     )
-    handler.handle_request(req)
+    handler.handle(req)
     assert len(ws.sent) == 1
     parsed = protocol.parse_message_json(ws.sent[0])
     assert isinstance(parsed, protocol.ExecResponse)

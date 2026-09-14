@@ -337,7 +337,7 @@ def run_worker(args: argparse.Namespace) -> int:
             msg = conn.recv(timeout_s=0.25)
             if msg is None:
                 continue
-            handler.handle_request(msg)
+            handler.handle(msg)
 
         return 0
 

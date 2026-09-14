@@ -333,18 +333,18 @@ class RequestHandler:
         return idb is not None and idb.quit_requested
 
     def handle(self, msg: protocol.ExecRequest | protocol.ResetRequest | protocol.QuitRequest) -> None:
-        """Dispatch a single request. Raises on internal errors (not user code errors)."""
-        if isinstance(msg, protocol.ResetRequest):
-            self._handle_reset(msg)
-        elif isinstance(msg, protocol.ExecRequest):
-            self._handle_exec(msg)
-        elif isinstance(msg, protocol.QuitRequest):
-            self._handle_quit(msg)
+        """Dispatch one request. Never raises: an internal error is logged and answered.
 
-    def handle_request(self, msg: protocol.ExecRequest | protocol.ResetRequest | protocol.QuitRequest) -> None:
-        """Handle one request; on internal exception log and send TARGET_INTERNAL_ERROR."""
+        Both runtimes call this, so neither can lose a request or die on our bug.
+        Errors inside user code are not internal errors; they travel in the exec response.
+        """
         try:
-            self.handle(msg)
+            if isinstance(msg, protocol.ResetRequest):
+                self._handle_reset(msg)
+            elif isinstance(msg, protocol.ExecRequest):
+                self._handle_exec(msg)
+            elif isinstance(msg, protocol.QuitRequest):
+                self._handle_quit(msg)
         except Exception as exc:
             log.error("internal error handling request", exc_info=True)
             try:
