@@ -68,11 +68,11 @@ _ERROR_HINTS: dict[str, str] = {
     protocol.ERR_INVALID_TARGET_ROLE: "the target must be an IDA client id (role=ida). See `ida-bridge list`.",
     protocol.ERR_QUEUE_FULL: "retry later or reduce concurrent requests.",
     protocol.ERR_RESPONSE_NOT_SERIALIZABLE: (
-        "the IDA-side response could not be JSON-serialized; the target is still running. "
-        "Inspect the error message and fix the script."
+        "the named field holds text JSON cannot encode (e.g. surrogate-escaped bytes). The target is still running."
     ),
     protocol.ERR_TARGET_INTERNAL_ERROR: (
-        "the IDA runtime hit an internal error handling the request; the target is still running."
+        "the IDA side failed outside your script -- our code, IDA, or another plugin. "
+        "The target is still running, but internal IDA state is unknown; see the traceback."
     ),
     protocol.ERR_TAKEOVER_PENDING: "a takeover reset is in flight. Wait and retry.",
     protocol.ERR_SESSION_LOCKED: "reconnect the target to clear the lock.",
