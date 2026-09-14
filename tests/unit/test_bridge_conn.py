@@ -153,3 +153,66 @@ def test_exec_surrogate_stdout_does_not_raise() -> None:
     assert parsed.code == protocol.ERR_RESPONSE_NOT_SERIALIZABLE
     assert parsed.message is not None
     assert "stdout" in parsed.message
+
+
+def test_send_names_every_unserializable_field() -> None:
+    """One reply should let the caller fix everything, not one field per retry."""
+    conn, ws = _conn_with_fake_ws()
+    bad = protocol.ExecResponse(
+        id=protocol.new_req_id(),
+        src="ida-1",
+        dst="agent-1",
+        ok=True,
+        stdout=_surrogate_text(),
+        stderr=_surrogate_text(),
+        result={"k": [_surrogate_text()]},
+    )
+
+    conn.send(bad)
+
+    parsed = protocol.parse_message_json(ws.sent[0])
+    assert isinstance(parsed, protocol.ExecResponse)
+    assert parsed.message is not None
+    for field in ("stdout", "stderr", "result"):
+        assert field in parsed.message
+
+
+def test_send_does_not_blame_a_field_pydantic_can_serialize() -> None:
+    """A set has no JSON form but pydantic handles it; the surrogate is the culprit."""
+    conn, ws = _conn_with_fake_ws()
+    bad = protocol.ExecResponse(
+        id=protocol.new_req_id(),
+        src="ida-1",
+        dst="agent-1",
+        ok=True,
+        result={"k": {1, 2}},
+        stdout=_surrogate_text(),
+    )
+
+    conn.send(bad)
+
+    parsed = protocol.parse_message_json(ws.sent[0])
+    assert isinstance(parsed, protocol.ExecResponse)
+    assert parsed.message is not None
+    assert "stdout" in parsed.message
+    assert "result" not in parsed.message
+
+
+def test_send_drops_an_error_response_that_is_itself_unserializable(caplog: pytest.LogCaptureFixture) -> None:
+    """No replacement loop: an already-failed error reply is logged and dropped."""
+    conn, ws = _conn_with_fake_ws()
+    bad = protocol.ExecResponse(
+        id=protocol.new_req_id(),
+        src="ida-1",
+        dst="agent-1",
+        ok=False,
+        code=protocol.ERR_RESPONSE_NOT_SERIALIZABLE,
+        message="already failed",
+        traceback=_surrogate_text(),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="ida_bridge.bridge_conn"):
+        conn.send(bad)
+
+    assert ws.sent == []
+    assert [r for r in caplog.records if r.levelno >= logging.ERROR]

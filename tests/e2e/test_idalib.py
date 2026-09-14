@@ -128,6 +128,19 @@ class TestExecStdout:
             assert after.ok
             assert after.stdout and "still_alive" in after.stdout
 
+    async def test_unserializable_stdout_errors_and_instance_survives(self, shared_idalib: IdalibInstance) -> None:
+        """Output that cannot be serialized is reported, and the runner keeps serving."""
+        code = r"print(b'PRE_abc\xff_POST'.decode('utf-8', 'surrogateescape'))"
+        async with shared_idalib.agent_client() as agent:
+            resp = await agent.exec(shared_idalib.client_id, code, session_id=SESSION_ID, persist=True)
+            assert not resp.ok
+            assert resp.code == protocol.ERR_RESPONSE_NOT_SERIALIZABLE
+            assert resp.message and "stdout" in resp.message
+
+            after = await agent.exec(shared_idalib.client_id, "_result_ = 42", session_id=SESSION_ID, persist=True)
+            assert after.ok
+            assert after.result == 42
+
 
 class TestExecError:
     async def test_exec_error(self, shared_idalib: IdalibInstance) -> None:
