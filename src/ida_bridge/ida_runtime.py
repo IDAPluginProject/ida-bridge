@@ -254,18 +254,6 @@ def collect_meta(*, client_id: str, runtime: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _wire_safe_text(text: str, *, fallback: str) -> str:
-    sanitized = text.encode("ascii", "backslashreplace").decode("ascii")
-    return sanitized if sanitized.strip() else fallback
-
-
-def _exception_text(exc: BaseException) -> str:
-    try:
-        return f"{type(exc).__name__}: {exc}"
-    except Exception:
-        return type(exc).__name__
-
-
 def _internal_error_response(
     client_id: str,
     msg: protocol.ExecRequest | protocol.ResetRequest | protocol.QuitRequest,
@@ -280,7 +268,7 @@ def _internal_error_response(
         msg_err = f"unexpected request type for internal-error handling: {msg.type}"
         raise AssertionError(msg_err)
 
-    message = _wire_safe_text(_exception_text(exc), fallback="internal error")
+    message = protocol.ascii_escaped(f"{type(exc).__name__}: {exc}", fallback="internal error")
     kwargs: dict[str, Any] = {
         "id": msg.id,
         "src": client_id,
@@ -294,7 +282,7 @@ def _internal_error_response(
             tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         except Exception:
             tb = "traceback unavailable"
-        kwargs["traceback"] = _wire_safe_text(tb, fallback="traceback unavailable")
+        kwargs["traceback"] = protocol.ascii_escaped(tb, fallback="traceback unavailable")
     return response_cls(**kwargs)
 
 

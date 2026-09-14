@@ -4,7 +4,6 @@ Used by both UI IDA (plugin) and idalib (headless runner).
 Handles handshake, message validation, request queueing, and reconnect with backoff.
 """
 
-import json
 import logging
 import queue
 import threading
@@ -39,43 +38,14 @@ def abort_ws(ws: websocket.WebSocketApp) -> None:
         pass
 
 
-def _wire_safe_text(text: str, *, fallback: str) -> str:
-    sanitized = text.encode("ascii", "backslashreplace").decode("ascii")
-    return sanitized if sanitized.strip() else fallback
-
-
-def _exception_text(exc: BaseException) -> str:
-    try:
-        return f"{type(exc).__name__}: {exc}"
-    except Exception:
-        return type(exc).__name__
-
-
-def _unserializable_fields(msg: protocol.Message) -> list[str]:
-    """Name every field that fails JSON serialization, so one fix covers all of them.
-
-    Runs only after ``dump_message_json`` already failed, to point at what caused it.
-    ``ensure_ascii=False`` leaves text unescaped, so a character that cannot be encoded
-    (a lone surrogate, say) fails here as it did in pydantic; ``default=str`` keeps values
-    that merely lack a JSON form -- pydantic serializes those -- from being blamed.
-    """
-    bad: list[str] = []
-    for name in type(msg).model_fields:
-        try:
-            json.dumps(getattr(msg, name, None), ensure_ascii=False, default=str).encode("utf-8")
-        except Exception:
-            bad.append(name)
-    return bad
-
-
 def _not_serializable_response(msg: protocol.Message, exc: BaseException) -> protocol.Message | None:
     if not isinstance(msg, protocol.ResponseBase):
         return None
     if msg.code == protocol.ERR_RESPONSE_NOT_SERIALIZABLE:
         return None
 
-    details = _wire_safe_text(_exception_text(exc), fallback="response not serializable")
-    fields = _unserializable_fields(msg)
+    details = protocol.ascii_escaped(f"{type(exc).__name__}: {exc}", fallback="response not serializable")
+    fields = protocol.unserializable_fields(msg)
     message = f"cannot serialize {', '.join(fields)}: {details}" if fields else details
     return type(msg)(
         id=msg.id,
