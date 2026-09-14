@@ -4,6 +4,7 @@ Used by both UI IDA (plugin) and idalib (headless runner).
 Handles handshake, message validation, request queueing, and reconnect with backoff.
 """
 
+import json
 import logging
 import queue
 import threading
@@ -50,31 +51,21 @@ def _exception_text(exc: BaseException) -> str:
         return type(exc).__name__
 
 
-def _contains_unserializable_text(value: object) -> bool:
-    if isinstance(value, str):
-        try:
-            value.encode("utf-8")
-        except UnicodeEncodeError:
-            return True
-        return False
-    if isinstance(value, dict):
-        return any(_contains_unserializable_text(k) or _contains_unserializable_text(v) for k, v in value.items())
-    if isinstance(value, (list, tuple)):
-        return any(_contains_unserializable_text(v) for v in value)
-    return False
+def _unserializable_fields(msg: protocol.Message) -> list[str]:
+    """Name every field that fails JSON serialization, so one fix covers all of them.
 
-
-def _unserializable_field(msg: protocol.Message) -> str | None:
-    skip = {"v", "type", "id", "src", "dst", "ok", "code"}
+    Runs only after ``dump_message_json`` already failed, to point at what caused it.
+    ``ensure_ascii=False`` leaves text unescaped, so a character that cannot be encoded
+    (a lone surrogate, say) fails here as it did in pydantic; ``default=str`` keeps values
+    that merely lack a JSON form -- pydantic serializes those -- from being blamed.
+    """
+    bad: list[str] = []
     for name in type(msg).model_fields:
-        if name in skip:
-            continue
-        value = getattr(msg, name, None)
-        if value is None:
-            continue
-        if _contains_unserializable_text(value):
-            return name
-    return None
+        try:
+            json.dumps(getattr(msg, name, None), ensure_ascii=False, default=str).encode("utf-8")
+        except Exception:
+            bad.append(name)
+    return bad
 
 
 def _not_serializable_response(msg: protocol.Message, exc: BaseException) -> protocol.Message | None:
@@ -84,8 +75,8 @@ def _not_serializable_response(msg: protocol.Message, exc: BaseException) -> pro
         return None
 
     details = _wire_safe_text(_exception_text(exc), fallback="response not serializable")
-    field = _unserializable_field(msg)
-    message = f"cannot serialize field {field}: {details}" if field else details
+    fields = _unserializable_fields(msg)
+    message = f"cannot serialize {', '.join(fields)}: {details}" if fields else details
     return type(msg)(
         id=msg.id,
         src=msg.src,
