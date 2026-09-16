@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 import io
+import logging
 import os
 import queue
 import sys
@@ -9,6 +10,8 @@ import traceback
 from typing import Any
 
 from . import protocol
+
+log = logging.getLogger(__name__)
 
 
 def serialize_result(obj: Any, *, depth: int = 0, max_depth: int = 4) -> Any:
@@ -250,6 +253,39 @@ def collect_meta(*, client_id: str, runtime: str) -> dict[str, Any]:
 # Request handler
 # ---------------------------------------------------------------------------
 
+
+def _internal_error_response(
+    client_id: str,
+    msg: protocol.ExecRequest | protocol.ResetRequest | protocol.QuitRequest,
+    exc: BaseException,
+) -> protocol.Message:
+    response_cls = {
+        protocol.MSG_EXEC: protocol.ExecResponse,
+        protocol.MSG_RESET: protocol.ResetResponse,
+        protocol.MSG_QUIT: protocol.QuitResponse,
+    }.get(msg.type)
+    if response_cls is None:
+        msg_err = f"unexpected request type for internal-error handling: {msg.type}"
+        raise AssertionError(msg_err)
+
+    message = protocol.ascii_escaped(f"{type(exc).__name__}: {exc}", fallback="internal error")
+    kwargs: dict[str, Any] = {
+        "id": msg.id,
+        "src": client_id,
+        "dst": msg.src,
+        "ok": False,
+        "code": protocol.ERR_TARGET_INTERNAL_ERROR,
+        "message": message,
+    }
+    if response_cls is protocol.ExecResponse:
+        try:
+            tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        except Exception:
+            tb = "traceback unavailable"
+        kwargs["traceback"] = protocol.ascii_escaped(tb, fallback="traceback unavailable")
+    return response_cls(**kwargs)
+
+
 # Signature for code execution callbacks.
 # (code, exec_env) -> (value, stdout, stderr, error)
 type RunCodeFn = Callable[[str, dict[str, Any]], tuple[Any, str, str, Exception | None]]
@@ -285,13 +321,24 @@ class RequestHandler:
         return idb is not None and idb.quit_requested
 
     def handle(self, msg: protocol.ExecRequest | protocol.ResetRequest | protocol.QuitRequest) -> None:
-        """Dispatch a single request. Raises on internal errors (not user code errors)."""
-        if isinstance(msg, protocol.ResetRequest):
-            self._handle_reset(msg)
-        elif isinstance(msg, protocol.ExecRequest):
-            self._handle_exec(msg)
-        elif isinstance(msg, protocol.QuitRequest):
-            self._handle_quit(msg)
+        """Dispatch one request. Never raises: an internal error is logged and answered.
+
+        Both runtimes call this, so neither can lose a request or die on our bug.
+        Errors inside user code are not internal errors; they travel in the exec response.
+        """
+        try:
+            if isinstance(msg, protocol.ResetRequest):
+                self._handle_reset(msg)
+            elif isinstance(msg, protocol.ExecRequest):
+                self._handle_exec(msg)
+            elif isinstance(msg, protocol.QuitRequest):
+                self._handle_quit(msg)
+        except Exception as exc:
+            log.error("internal error handling request", exc_info=True)
+            try:
+                self._send(_internal_error_response(self._client_id, msg, exc))
+            except Exception:
+                log.error("failed to send internal error response", exc_info=True)
 
     def _handle_exec(self, msg: protocol.ExecRequest) -> None:
         if msg.reset_env:

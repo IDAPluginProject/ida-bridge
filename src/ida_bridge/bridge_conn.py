@@ -38,6 +38,25 @@ def abort_ws(ws: websocket.WebSocketApp) -> None:
         pass
 
 
+def _not_serializable_response(msg: protocol.Message, exc: BaseException) -> protocol.Message | None:
+    if not isinstance(msg, protocol.ResponseBase):
+        return None
+    if msg.code == protocol.ERR_RESPONSE_NOT_SERIALIZABLE:
+        return None
+
+    details = protocol.ascii_escaped(f"{type(exc).__name__}: {exc}", fallback="response not serializable")
+    fields = protocol.unserializable_fields(msg)
+    message = f"cannot serialize {', '.join(fields)}: {details}" if fields else details
+    return type(msg)(
+        id=msg.id,
+        src=msg.src,
+        dst=msg.dst,
+        ok=False,
+        code=protocol.ERR_RESPONSE_NOT_SERIALIZABLE,
+        message=message,
+    )
+
+
 def _queue_full_response(
     client_id: str,
     msg: protocol.ExecRequest | protocol.ResetRequest | protocol.QuitRequest,
@@ -148,7 +167,18 @@ class BridgeConn:
 
     def send(self, msg: protocol.Message) -> None:
         """Send a message on the current connection."""
-        data = protocol.dump_message_json(msg)
+        try:
+            data = protocol.dump_message_json(msg)
+        except Exception as exc:
+            log.error("response not serializable", exc_info=True)
+            try:
+                replacement = _not_serializable_response(msg, exc)
+                if replacement is None:
+                    return
+                data = protocol.dump_message_json(replacement)
+            except Exception:
+                log.error("error response not serializable", exc_info=True)
+                return
 
         with self._conn_lock:
             ws = self._ws

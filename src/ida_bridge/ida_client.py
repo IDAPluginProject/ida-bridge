@@ -10,7 +10,6 @@ with UI-specific behavior:
 import logging
 import os
 import threading
-import traceback
 from typing import Any
 
 # IDA-side imports: this module is meant to run inside IDA.
@@ -132,17 +131,8 @@ class IDAClient:
             if msg is None:
                 continue
 
-            try:
-                handler.handle(msg)
-            except Exception as exc:
-                self._fatal_internal_error(exc)
-                return
+            handler.handle(msg)
 
             if handler.quit_requested:
                 log.info("shutdown requested")
                 ida_kernwin.execute_sync(lambda: idc.qexit(0), ida_kernwin.MFF_FAST)
-
-    def _fatal_internal_error(self, exc: Exception) -> None:
-        tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-        log.error("FATAL: internal error in ida client\n%s", tb)
-        self.disconnect()

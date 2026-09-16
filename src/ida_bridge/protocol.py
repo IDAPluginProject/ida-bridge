@@ -1,3 +1,4 @@
+import json
 import os
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
@@ -102,6 +103,8 @@ ERR_TARGET_DISCONNECTED = "TARGET_DISCONNECTED"
 ERR_TARGET_PING_TIMEOUT = "TARGET_PING_TIMEOUT"
 ERR_TIMEOUT = "TIMEOUT"
 ERR_QUEUE_FULL = "QUEUE_FULL"
+ERR_RESPONSE_NOT_SERIALIZABLE = "RESPONSE_NOT_SERIALIZABLE"
+ERR_TARGET_INTERNAL_ERROR = "TARGET_INTERNAL_ERROR"
 ERR_INVALID_TARGET_ROLE = "INVALID_TARGET_ROLE"
 ERR_SESSION_CONFLICT = "SESSION_CONFLICT"
 ERR_TAKEOVER_PENDING = "TAKEOVER_PENDING"
@@ -428,6 +431,34 @@ def parse_message_json(raw: str) -> Message:
     """
 
     return _message_adapter.validate_json(raw, context={"wire": True})
+
+
+def ascii_escaped(text: str, *, fallback: str) -> str:
+    """Text safe to put in an error field: ASCII-only, never blank.
+
+    Escaping keeps the text from repeating the failure it describes -- a response reporting
+    a serialization failure has to serialize. The fallback covers text that escapes to
+    nothing, since ``message`` is ``NonBlankStr`` and would reject it.
+    """
+    escaped = text.encode("ascii", "backslashreplace").decode("ascii")
+    return escaped if escaped.strip() else fallback
+
+
+def unserializable_fields(msg: Message) -> list[str]:
+    """Name every field that fails JSON serialization, so one fix covers all of them.
+
+    Runs only after ``dump_message_json`` already failed, to point at what caused it.
+    ``ensure_ascii=False`` leaves text unescaped, so a character that cannot be encoded
+    (a lone surrogate, say) fails here as it did in pydantic; ``default=str`` keeps values
+    that merely lack a JSON form -- pydantic serializes those -- from being blamed.
+    """
+    bad: list[str] = []
+    for name in type(msg).model_fields:
+        try:
+            json.dumps(getattr(msg, name, None), ensure_ascii=False, default=str).encode("utf-8")
+        except Exception:
+            bad.append(name)
+    return bad
 
 
 def dump_message_json(msg: Message) -> str:
