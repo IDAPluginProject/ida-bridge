@@ -496,6 +496,9 @@ def dump_message_json(msg: Message) -> str:
 
 DEFAULT_WS_MAX_SIZE = 64 * 1024 * 1024  # 64 MiB
 
+# Floor so our error responses always fit; a smaller cap fails late, as a 1009 close.
+MIN_WS_MAX_SIZE = 16 * 1024
+
 
 def ws_max_size() -> int:
     """Max inbound websocket message size.
@@ -506,8 +509,9 @@ def ws_max_size() -> int:
 
     raw = os.getenv("IDA_BRIDGE_WS_MAX_SIZE", str(DEFAULT_WS_MAX_SIZE))
     size = int(raw)
-    if size <= 0:
-        raise ValueError("IDA_BRIDGE_WS_MAX_SIZE must be > 0")
+    if size < MIN_WS_MAX_SIZE:
+        msg = f"IDA_BRIDGE_WS_MAX_SIZE must be >= {MIN_WS_MAX_SIZE}"
+        raise ValueError(msg)
     return size
 
 

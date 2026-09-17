@@ -25,7 +25,7 @@ Defines the websocket protocol between `agent`, `bridge`, and `ida`.
 
 - non-text frames are rejected with `ProtocolError`, then close `1002`
 - oversized inbound frames may be rejected by the websocket server with `1009`; IDA replies that exceed the cap are not sent and the target answers `RESPONSE_TOO_LARGE` instead
-- server max incoming message size defaults to `67108864` bytes and is configured by `IDA_BRIDGE_WS_MAX_SIZE`
+- server max incoming message size defaults to `67108864` bytes and is configured by `IDA_BRIDGE_WS_MAX_SIZE`, which must be at least `16384`: below that an oversize reply's own error response would not fit either
 
 ## Roles and client IDs
 

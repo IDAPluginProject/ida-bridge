@@ -232,7 +232,7 @@ def test_send_replaces_an_error_response_that_is_itself_unserializable(caplog: p
 
 
 def test_send_oversized_response_replies_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    limit = 2048
+    limit = protocol.MIN_WS_MAX_SIZE
     monkeypatch.setenv("IDA_BRIDGE_WS_MAX_SIZE", str(limit))
     conn, ws = _conn_with_fake_ws(max_size=limit)
     conn._ready.set()
@@ -242,7 +242,7 @@ def test_send_oversized_response_replies_error(monkeypatch: pytest.MonkeyPatch) 
         src="ida-1",
         dst="agent-1",
         ok=True,
-        result="z" * 4000,
+        result="z" * (protocol.MIN_WS_MAX_SIZE * 2),
     )
     original = protocol.dump_message_json(huge)
     assert len(original) > limit
@@ -270,11 +270,11 @@ def test_send_oversized_response_replies_error(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_send_oversized_covers_stdout_stderr_result_together(monkeypatch: pytest.MonkeyPatch) -> None:
-    limit = 2048
+    limit = protocol.MIN_WS_MAX_SIZE
     monkeypatch.setenv("IDA_BRIDGE_WS_MAX_SIZE", str(limit))
     conn, ws = _conn_with_fake_ws(max_size=limit)
     conn._ready.set()
-    chunk = "z" * 800
+    chunk = "z" * (protocol.MIN_WS_MAX_SIZE // 2)
     combined = protocol.ExecResponse(
         id=protocol.new_req_id(),
         src="ida-1",
@@ -304,7 +304,7 @@ def test_send_oversized_covers_stdout_stderr_result_together(monkeypatch: pytest
 
 
 def test_oversized_response_keeps_handler_serving(monkeypatch: pytest.MonkeyPatch) -> None:
-    limit = 2048
+    limit = protocol.MIN_WS_MAX_SIZE
     monkeypatch.setenv("IDA_BRIDGE_WS_MAX_SIZE", str(limit))
     conn, ws = _conn_with_fake_ws(max_size=limit)
     conn._ready.set()
@@ -314,7 +314,7 @@ def test_oversized_response_keeps_handler_serving(monkeypatch: pytest.MonkeyPatc
         id=protocol.new_req_id(),
         src="agent-1",
         dst="ida-1",
-        code="_result_ = 'z' * 4000",
+        code=f"_result_ = 'z' * {protocol.MIN_WS_MAX_SIZE * 2}",
     )
     handler.handle(huge_req)
 
