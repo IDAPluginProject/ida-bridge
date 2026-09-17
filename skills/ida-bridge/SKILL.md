@@ -104,7 +104,6 @@ Shared instance means shared IDB: co-tenants edit the same database, so another 
 - On success, structured data returned through `_result_` appears under `--- result ---`. If there is no result section, the command succeeded but returned no structured data.
 - stdout/stderr from code executed inside IDA are captured and returned under `--- stdout ---` / `--- stderr ---`. `print()` writes to stdout. Treat these sections as logs; put machine-consumable data in `_result_`.
 - On failure, read `error code`, `error message`, and `hint` first. `--- traceback ---` is from code executed inside IDA (`--sql`, `-f`, `-c`). `--- bridge trace ---` is bridge/protocol/routing diagnostic context.
-- `RESPONSE_NOT_SERIALIZABLE` / `RESPONSE_TOO_LARGE` / `TARGET_INTERNAL_ERROR` mean the target stayed up. Fix the script (shrink the result/stdout, or inspect the internal error) and retry; do not assume the instance is gone.
 - Use `--json` only when a script/tool needs the raw response envelope.
 
 ### Headless input options
