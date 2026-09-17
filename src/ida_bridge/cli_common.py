@@ -70,6 +70,9 @@ _ERROR_HINTS: dict[str, str] = {
     protocol.ERR_RESPONSE_NOT_SERIALIZABLE: (
         "the named field holds text JSON cannot encode (e.g. surrogate-escaped bytes). The target is still running."
     ),
+    protocol.ERR_RESPONSE_TOO_LARGE: (
+        "shrink the result or stdout so the serialized response fits. The target is still running."
+    ),
     protocol.ERR_TARGET_INTERNAL_ERROR: (
         "the IDA side failed outside your script -- our code, IDA, or another plugin. "
         "The target is still running, but internal IDA state is unknown; see the traceback."
