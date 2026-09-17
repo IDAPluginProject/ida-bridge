@@ -24,7 +24,7 @@ Defines the websocket protocol between `agent`, `bridge`, and `ida`.
 ## Transport
 
 - non-text frames are rejected with `ProtocolError`, then close `1002`
-- oversized messages may be rejected by the websocket server with `1009`
+- oversized inbound frames may be rejected by the websocket server with `1009`; IDA replies that exceed the cap are not sent and the target answers `RESPONSE_TOO_LARGE` instead
 - server max incoming message size defaults to `67108864` bytes and is configured by `IDA_BRIDGE_WS_MAX_SIZE`
 
 ## Roles and client IDs
@@ -320,6 +320,7 @@ Codes:
 - `TIMEOUT`: bridge-side request timeout
 - `QUEUE_FULL`: IDA runtime rejected the request because its request queue is full
 - `RESPONSE_NOT_SERIALIZABLE`: IDA runtime could not JSON-serialize the response; the original payload is dropped and the target keeps serving
+- `RESPONSE_TOO_LARGE`: serialized IDA response exceeded the websocket frame limit; the original payload is dropped and the target keeps serving
 - `TARGET_INTERNAL_ERROR`: unexpected exception in the IDA request handler; the target keeps serving
 - `SESSION_CONFLICT`: target exec environment is owned by another session
 - `TAKEOVER_PENDING`: ownership transfer in progress

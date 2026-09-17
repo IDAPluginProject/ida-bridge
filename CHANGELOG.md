@@ -4,6 +4,7 @@
 
 ### Fixed
 - Unserializable IDA responses and unexpected request-handler exceptions no longer take down the target. They reply `RESPONSE_NOT_SERIALIZABLE` / `TARGET_INTERNAL_ERROR` and keep serving ([#8](https://github.com/cellebrite-labs/ida-bridge/issues/8)).
+- Oversized IDA responses no longer close the websocket with `1009`. They reply `RESPONSE_TOO_LARGE` and keep serving ([#7](https://github.com/cellebrite-labs/ida-bridge/issues/7)).
 
 ## [0.6.0] - 2026-09-03
 

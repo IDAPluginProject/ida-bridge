@@ -57,6 +57,22 @@ def _not_serializable_response(msg: protocol.Message, exc: BaseException) -> pro
     )
 
 
+def _too_large_response(msg: protocol.Message, *, size: int, limit: int) -> protocol.Message | None:
+    if not isinstance(msg, protocol.ResponseBase):
+        return None
+    if msg.code == protocol.ERR_RESPONSE_TOO_LARGE:
+        return None
+
+    return type(msg)(
+        id=msg.id,
+        src=msg.src,
+        dst=msg.dst,
+        ok=False,
+        code=protocol.ERR_RESPONSE_TOO_LARGE,
+        message=f"serialized response is {size} bytes; limit is {limit} bytes. Shrink the result or stdout.",
+    )
+
+
 def _queue_full_response(
     client_id: str,
     msg: protocol.ExecRequest | protocol.ResetRequest | protocol.QuitRequest,
@@ -178,6 +194,20 @@ class BridgeConn:
                 data = protocol.dump_message_json(replacement)
             except Exception:
                 log.error("error response not serializable", exc_info=True)
+                return
+
+        limit = protocol.ws_max_size()
+        if len(data) > limit:
+            replacement = _too_large_response(msg, size=len(data), limit=limit)
+            if replacement is None:
+                return
+            try:
+                data = protocol.dump_message_json(replacement)
+            except Exception:
+                log.error("error response not serializable", exc_info=True)
+                return
+            if len(data) > limit:
+                log.error("error response too large")
                 return
 
         with self._conn_lock:

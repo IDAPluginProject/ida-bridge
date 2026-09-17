@@ -1,4 +1,4 @@
-"""Tests for BridgeConn.send serialization failure handling."""
+"""Tests for BridgeConn.send failure handling."""
 
 import logging
 
@@ -17,16 +17,21 @@ def _direct_run_code(
 
 
 class _FakeWS:
-    def __init__(self) -> None:
+    def __init__(self, *, max_size: int | None = None) -> None:
         self.sent: list[str] = []
+        self.max_size = max_size
+        self.closed = False
 
     def send(self, data: str) -> None:
+        if self.max_size is not None and len(data) > self.max_size:
+            self.closed = True
+            raise OSError("message too big")
         self.sent.append(data)
 
 
-def _conn_with_fake_ws() -> tuple[BridgeConn, _FakeWS]:
+def _conn_with_fake_ws(*, max_size: int | None = None) -> tuple[BridgeConn, _FakeWS]:
     conn = BridgeConn(client_id="ida-1", url="ws://127.0.0.1:9", meta={})
-    ws = _FakeWS()
+    ws = _FakeWS(max_size=max_size)
     conn._ws = ws  # type: ignore[assignment]
     return conn, ws
 
@@ -216,3 +221,122 @@ def test_send_drops_an_error_response_that_is_itself_unserializable(caplog: pyte
 
     assert ws.sent == []
     assert [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+def test_send_oversized_response_replies_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    limit = 2048
+    monkeypatch.setenv("IDA_BRIDGE_WS_MAX_SIZE", str(limit))
+    conn, ws = _conn_with_fake_ws(max_size=limit)
+    conn._ready.set()
+    req_id = protocol.new_req_id()
+    huge = protocol.ExecResponse(
+        id=req_id,
+        src="ida-1",
+        dst="agent-1",
+        ok=True,
+        result="z" * 4000,
+    )
+    original = protocol.dump_message_json(huge)
+    assert len(original) > limit
+
+    conn.send(huge)
+
+    assert ws.closed is False
+    assert conn._ready.is_set()
+    assert len(ws.sent) == 1
+    assert ws.sent[0] != original
+    assert original not in ws.sent
+    assert len(ws.sent[0]) <= limit
+    parsed = protocol.parse_message_json(ws.sent[0])
+    assert isinstance(parsed, protocol.ExecResponse)
+    assert parsed.ok is False
+    assert parsed.id == req_id
+    assert parsed.src == "ida-1"
+    assert parsed.dst == "agent-1"
+    assert parsed.code == protocol.ERR_RESPONSE_TOO_LARGE
+    assert parsed.message is not None
+    assert str(limit) in parsed.message
+    assert str(len(original)) in parsed.message
+    parsed.message.encode("ascii")
+    ws.sent[0].encode("ascii")
+
+
+def test_send_oversized_covers_stdout_stderr_result_together(monkeypatch: pytest.MonkeyPatch) -> None:
+    limit = 2048
+    monkeypatch.setenv("IDA_BRIDGE_WS_MAX_SIZE", str(limit))
+    conn, ws = _conn_with_fake_ws(max_size=limit)
+    conn._ready.set()
+    chunk = "z" * 800
+    combined = protocol.ExecResponse(
+        id=protocol.new_req_id(),
+        src="ida-1",
+        dst="agent-1",
+        ok=True,
+        result=chunk,
+        stdout=chunk,
+        stderr=chunk,
+    )
+    original = protocol.dump_message_json(combined)
+    assert len(original) > limit
+    for kwargs in ({"result": chunk}, {"stdout": chunk}, {"stderr": chunk}):
+        alone = protocol.ExecResponse(id=combined.id, src="ida-1", dst="agent-1", ok=True, **kwargs)
+        assert len(protocol.dump_message_json(alone)) <= limit
+
+    conn.send(combined)
+
+    assert ws.closed is False
+    assert len(ws.sent) == 1
+    assert original not in ws.sent
+    parsed = protocol.parse_message_json(ws.sent[0])
+    assert isinstance(parsed, protocol.ExecResponse)
+    assert parsed.code == protocol.ERR_RESPONSE_TOO_LARGE
+    assert parsed.message is not None
+    assert str(limit) in parsed.message
+    assert str(len(original)) in parsed.message
+
+
+def test_oversized_response_keeps_handler_serving(monkeypatch: pytest.MonkeyPatch) -> None:
+    limit = 2048
+    monkeypatch.setenv("IDA_BRIDGE_WS_MAX_SIZE", str(limit))
+    conn, ws = _conn_with_fake_ws(max_size=limit)
+    conn._ready.set()
+    handler = RequestHandler(client_id="ida-1", run_code=_direct_run_code, send=conn.send)
+
+    huge_req = protocol.ExecRequest(
+        id=protocol.new_req_id(),
+        src="agent-1",
+        dst="ida-1",
+        code="_result_ = 'z' * 4000",
+    )
+    handler.handle(huge_req)
+
+    assert ws.closed is False
+    assert conn._ready.is_set()
+    assert conn._ws is ws
+    assert len(ws.sent) == 1
+    parsed = protocol.parse_message_json(ws.sent[0])
+    assert isinstance(parsed, protocol.ExecResponse)
+    assert parsed.ok is False
+    assert parsed.id == huge_req.id
+    assert parsed.code == protocol.ERR_RESPONSE_TOO_LARGE
+    assert parsed.message is not None
+    assert str(limit) in parsed.message
+    assert all(len(frame) <= limit for frame in ws.sent)
+
+    ok_req = protocol.ExecRequest(
+        id=protocol.new_req_id(),
+        src="agent-1",
+        dst="ida-1",
+        code="_result_ = 1",
+    )
+    handler.handle(ok_req)
+
+    assert ws.closed is False
+    assert conn._ready.is_set()
+    assert conn._ws is ws
+    assert len(ws.sent) == 2
+    parsed_ok = protocol.parse_message_json(ws.sent[1])
+    assert isinstance(parsed_ok, protocol.ExecResponse)
+    assert parsed_ok.ok is True
+    assert parsed_ok.id == ok_req.id
+    assert parsed_ok.result == 1
