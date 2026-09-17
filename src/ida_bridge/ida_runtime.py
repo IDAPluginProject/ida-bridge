@@ -255,35 +255,21 @@ def collect_meta(*, client_id: str, runtime: str) -> dict[str, Any]:
 
 
 def _internal_error_response(
-    client_id: str,
     msg: protocol.ExecRequest | protocol.ResetRequest | protocol.QuitRequest,
     exc: BaseException,
 ) -> protocol.Message:
-    response_cls = {
-        protocol.MSG_EXEC: protocol.ExecResponse,
-        protocol.MSG_RESET: protocol.ResetResponse,
-        protocol.MSG_QUIT: protocol.QuitResponse,
-    }.get(msg.type)
-    if response_cls is None:
-        msg_err = f"unexpected request type for internal-error handling: {msg.type}"
-        raise AssertionError(msg_err)
+    """Error response for a request our own handling failed on. Only exec carries a traceback."""
+    tb = None
+    if msg.type == protocol.MSG_EXEC:
+        formatted = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        tb = protocol.ascii_escaped(formatted, fallback="traceback unavailable")
 
-    message = protocol.ascii_escaped(f"{type(exc).__name__}: {exc}", fallback="internal error")
-    kwargs: dict[str, Any] = {
-        "id": msg.id,
-        "src": client_id,
-        "dst": msg.src,
-        "ok": False,
-        "code": protocol.ERR_TARGET_INTERNAL_ERROR,
-        "message": message,
-    }
-    if response_cls is protocol.ExecResponse:
-        try:
-            tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-        except Exception:
-            tb = "traceback unavailable"
-        kwargs["traceback"] = protocol.ascii_escaped(tb, fallback="traceback unavailable")
-    return response_cls(**kwargs)
+    return protocol.error_for_request(
+        msg,
+        code=protocol.ERR_TARGET_INTERNAL_ERROR,
+        message=protocol.ascii_escaped(f"{type(exc).__name__}: {exc}", fallback="internal error"),
+        traceback=tb,
+    )
 
 
 # Signature for code execution callbacks.
@@ -336,7 +322,7 @@ class RequestHandler:
         except Exception as exc:
             log.error("internal error handling request", exc_info=True)
             try:
-                self._send(_internal_error_response(self._client_id, msg, exc))
+                self._send(_internal_error_response(msg, exc))
             except Exception:
                 log.error("failed to send internal error response", exc_info=True)
 

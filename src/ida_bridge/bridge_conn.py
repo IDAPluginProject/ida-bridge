@@ -38,61 +38,10 @@ def abort_ws(ws: websocket.WebSocketApp) -> None:
         pass
 
 
-def _not_serializable_response(msg: protocol.Message, exc: BaseException) -> protocol.Message | None:
-    if not isinstance(msg, protocol.ResponseBase):
-        return None
-    if msg.code == protocol.ERR_RESPONSE_NOT_SERIALIZABLE:
-        return None
-
+def _not_serializable_message(msg: protocol.Message, exc: BaseException) -> str:
     details = protocol.ascii_escaped(f"{type(exc).__name__}: {exc}", fallback="response not serializable")
     fields = protocol.unserializable_fields(msg)
-    message = f"cannot serialize {', '.join(fields)}: {details}" if fields else details
-    return type(msg)(
-        id=msg.id,
-        src=msg.src,
-        dst=msg.dst,
-        ok=False,
-        code=protocol.ERR_RESPONSE_NOT_SERIALIZABLE,
-        message=message,
-    )
-
-
-def _too_large_response(msg: protocol.Message, *, size: int, limit: int) -> protocol.Message | None:
-    if not isinstance(msg, protocol.ResponseBase):
-        return None
-    if msg.code == protocol.ERR_RESPONSE_TOO_LARGE:
-        return None
-
-    return type(msg)(
-        id=msg.id,
-        src=msg.src,
-        dst=msg.dst,
-        ok=False,
-        code=protocol.ERR_RESPONSE_TOO_LARGE,
-        message=f"serialized response is {size} bytes; limit is {limit} bytes. Shrink the result or stdout.",
-    )
-
-
-def _queue_full_response(
-    client_id: str,
-    msg: protocol.ExecRequest | protocol.ResetRequest | protocol.QuitRequest,
-) -> protocol.Message:
-    response_cls = {
-        protocol.MSG_EXEC: protocol.ExecResponse,
-        protocol.MSG_RESET: protocol.ResetResponse,
-        protocol.MSG_QUIT: protocol.QuitResponse,
-    }.get(msg.type)
-    if response_cls is None:
-        msg_err = f"unexpected request type for queue-full handling: {msg.type}"
-        raise AssertionError(msg_err)
-    return response_cls(
-        id=msg.id,
-        src=client_id,
-        dst=msg.src,
-        ok=False,
-        code=protocol.ERR_QUEUE_FULL,
-        message="request queue is full",
-    )
+    return f"cannot serialize {', '.join(fields)}: {details}" if fields else details
 
 
 class BridgeConn:
@@ -182,37 +131,49 @@ class BridgeConn:
         return None
 
     def send(self, msg: protocol.Message) -> None:
-        """Send a message on the current connection."""
+        """Send a message, or replace it with an error when it cannot be delivered.
+
+        A request that got a response deserves an answer either way, so a response we
+        cannot serialize or that exceeds the frame cap is replaced by an error on the same
+        request. A handshake has no error form; it can only be logged and dropped.
+        """
+        handling_response = isinstance(msg, protocol.ResponseBase)
+
         try:
             data = protocol.dump_message_json(msg)
         except Exception as exc:
-            log.error("response not serializable", exc_info=True)
+            log.error("message not serializable", exc_info=True)
+            if not handling_response:
+                return
             try:
-                replacement = _not_serializable_response(msg, exc)
-                if replacement is None:
-                    return
-                data = protocol.dump_message_json(replacement)
+                data = protocol.dump_message_json(
+                    protocol.error_from_response(
+                        msg,
+                        code=protocol.ERR_RESPONSE_NOT_SERIALIZABLE,
+                        message=_not_serializable_message(msg, exc),
+                    )
+                )
             except Exception:
                 log.error("error response not serializable", exc_info=True)
                 return
 
         limit = protocol.ws_max_size()
         if len(data) > limit:
-            replacement = _too_large_response(msg, size=len(data), limit=limit)
-            if replacement is None:
+            log.error("message is %d bytes, over the %d byte frame limit", len(data), limit)
+            if not handling_response:
                 return
-            try:
-                data = protocol.dump_message_json(replacement)
-            except Exception:
-                log.error("error response not serializable", exc_info=True)
-                return
-            if len(data) > limit:
-                log.error("error response too large")
-                return
+            data = protocol.dump_message_json(
+                protocol.error_from_response(
+                    msg,
+                    code=protocol.ERR_RESPONSE_TOO_LARGE,
+                    message=f"serialized response is {len(data)} bytes; limit is {limit} bytes.",
+                )
+            )
 
         with self._conn_lock:
             ws = self._ws
         if ws is None:
+            log.warning("dropping %s: not connected", msg.type)
             return
 
         with self._send_lock:
@@ -347,7 +308,7 @@ class BridgeConn:
         try:
             self._inbox.put_nowait(msg)
         except queue.Full:
-            self.send(_queue_full_response(self._client_id, msg))
+            self.send(protocol.error_for_request(msg, code=protocol.ERR_QUEUE_FULL, message="request queue is full"))
 
     def _on_error(self, ws: websocket.WebSocketApp, error: Exception) -> None:
         with self._conn_lock:

@@ -203,11 +203,12 @@ def test_send_does_not_blame_a_field_pydantic_can_serialize() -> None:
     assert "result" not in parsed.message
 
 
-def test_send_drops_an_error_response_that_is_itself_unserializable(caplog: pytest.LogCaptureFixture) -> None:
-    """No replacement loop: an already-failed error reply is logged and dropped."""
+def test_send_replaces_an_error_response_that_is_itself_unserializable(caplog: pytest.LogCaptureFixture) -> None:
+    """An error reply that cannot be sent is rebuilt, not dropped: the caller still hears back."""
     conn, ws = _conn_with_fake_ws()
+    req_id = protocol.new_req_id()
     bad = protocol.ExecResponse(
-        id=protocol.new_req_id(),
+        id=req_id,
         src="ida-1",
         dst="agent-1",
         ok=False,
@@ -219,7 +220,14 @@ def test_send_drops_an_error_response_that_is_itself_unserializable(caplog: pyte
     with caplog.at_level(logging.ERROR, logger="ida_bridge.bridge_conn"):
         conn.send(bad)
 
-    assert ws.sent == []
+    assert len(ws.sent) == 1
+    parsed = protocol.parse_message_json(ws.sent[0])
+    assert isinstance(parsed, protocol.ExecResponse)
+    assert parsed.id == req_id
+    assert parsed.code == protocol.ERR_RESPONSE_NOT_SERIALIZABLE
+    assert parsed.message is not None
+    assert "traceback" in parsed.message
+    assert parsed.traceback is None
     assert [r for r in caplog.records if r.levelno >= logging.ERROR]
 
 
@@ -340,3 +348,38 @@ def test_oversized_response_keeps_handler_serving(monkeypatch: pytest.MonkeyPatc
     assert parsed_ok.ok is True
     assert parsed_ok.id == ok_req.id
     assert parsed_ok.result == 1
+
+
+def test_send_drops_an_unserializable_handshake(caplog: pytest.LogCaptureFixture) -> None:
+    """A hello has no error form -- an IDB path with undecodable bytes can produce one."""
+    conn, ws = _conn_with_fake_ws()
+    hello = protocol.Hello(
+        client_id="ida-1",
+        role="ida",
+        meta={"idb_path": b"idb_\xff.i64".decode("utf-8", "surrogateescape")},
+    )
+
+    with caplog.at_level(logging.ERROR, logger="ida_bridge.bridge_conn"):
+        conn.send(hello)
+
+    assert ws.sent == []
+    assert [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+def test_send_without_a_connection_logs_the_drop(caplog: pytest.LogCaptureFixture) -> None:
+    conn, _ = _conn_with_fake_ws()
+    conn._ws = None  # type: ignore[assignment]
+    resp = protocol.ExecResponse(
+        id=protocol.new_req_id(),
+        src="ida-1",
+        dst="agent-1",
+        ok=True,
+        result=1,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="ida_bridge.bridge_conn"):
+        conn.send(resp)
+
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warnings) == 1
+    assert "not connected" in warnings[0].getMessage()

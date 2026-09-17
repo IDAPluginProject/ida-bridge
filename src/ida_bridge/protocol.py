@@ -434,6 +434,34 @@ def parse_message_json(raw: str) -> Message:
     return _message_adapter.validate_json(raw, context={"wire": True})
 
 
+_RESPONSE_FOR_REQUEST: dict[str, type[Message]] = {
+    MSG_EXEC: ExecResponse,
+    MSG_RESET: ResetResponse,
+    MSG_QUIT: QuitResponse,
+}
+
+
+def error_for_request(req: Message, *, code: str, message: str, traceback: str | None = None) -> Message:
+    """Error response for a request we could not serve.
+
+    ``src``/``dst`` come from the request: it was routed to us, so its ``dst`` is our
+    client id. Raises on anything that is not a request, since only requests reach the
+    paths that call this; a traceback on a non-exec response is rejected by the model.
+    """
+    response_cls = _RESPONSE_FOR_REQUEST.get(req.type)
+    if response_cls is None:
+        err = f"no error response for message type: {req.type}"
+        raise AssertionError(err)
+
+    extra = {"traceback": traceback} if traceback is not None else {}
+    return response_cls(id=req.id, src=req.dst, dst=req.src, ok=False, code=code, message=message, **extra)
+
+
+def error_from_response(resp: ResponseBase, *, code: str, message: str) -> Message:
+    """Degrade a response we could not deliver into an error on the same request."""
+    return type(resp)(id=resp.id, src=resp.src, dst=resp.dst, ok=False, code=code, message=message)
+
+
 def ascii_escaped(text: str, *, fallback: str) -> str:
     """Text safe to put in an error field: ASCII-only, never blank.
 
